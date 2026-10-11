@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Capability: Open App Feature (Built-In Intent: actions.intent.OPEN_APP_FEATURE) -->
+    <capability android:name="actions.intent.OPEN_APP_FEATURE">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="pro.antigravity.voice"
+            android:targetClass="pro.antigravity.voice.AntiVoiceActivity">
+            <parameter
+                android:name="feature"
+                android:key="feature" />
+        </intent>
+    </capability>
+
+    <!-- Shortcut 1: Run Unit Tests -->
+    <shortcut
+        android:shortcutId="shortcut_run_tests"
+        android:enabled="true"
+        android:icon="@drawable/ic_antigravity_logo"
+        android:shortcutShortLabel="@string/shortcut_tests_short"
+        android:shortcutLongLabel="@string/shortcut_tests_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="pro.antigravity.voice"
+            android:targetClass="pro.antigravity.voice.AntiVoiceActivity">
+            <extra
+                android:name="target_action"
+                android:value="tests" />
+        </intent>
+        <capability-binding android:key="actions.intent.OPEN_APP_FEATURE">
+            <parameter-binding
+                android:key="feature"
+                android:value="@string/shortcut_tests_short" />
+        </capability-binding>
+    </shortcut>
+
+    <!-- Shortcut 2: Check Git Status -->
+    <shortcut
+        android:shortcutId="shortcut_git_status"
+        android:enabled="true"
+        android:icon="@drawable/ic_antigravity_logo"
+        android:shortcutShortLabel="@string/shortcut_git_short"
+        android:shortcutLongLabel="@string/shortcut_git_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="pro.antigravity.voice"
+            android:targetClass="pro.antigravity.voice.AntiVoiceActivity">
+            <extra
+                android:name="target_action"
+                android:value="git" />
+        </intent>
+        <capability-binding android:key="actions.intent.OPEN_APP_FEATURE">
+            <parameter-binding
+                android:key="feature"
+                android:value="@string/shortcut_git_short" />
+        </capability-binding>
+    </shortcut>
+
+    <!-- Shortcut 3: Prod Health & Logs -->
+    <shortcut
+        android:shortcutId="shortcut_prod_health"
+        android:enabled="true"
+        android:icon="@drawable/ic_antigravity_logo"
+        android:shortcutShortLabel="@string/shortcut_health_short"
+        android:shortcutLongLabel="@string/shortcut_health_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="pro.antigravity.voice"
+            android:targetClass="pro.antigravity.voice.AntiVoiceActivity">
+            <extra
+                android:name="target_action"
+                android:value="health" />
+        </intent>
+        <capability-binding android:key="actions.intent.OPEN_APP_FEATURE">
+            <parameter-binding
+                android:key="feature"
+                android:value="@string/shortcut_health_short" />
+        </capability-binding>
+    </shortcut>
+
+    <!-- Shortcut 4: Trigger Deploy -->
+    <shortcut
+        android:shortcutId="shortcut_trigger_deploy"
+        android:enabled="true"
+        android:icon="@drawable/ic_antigravity_logo"
+        android:shortcutShortLabel="@string/shortcut_deploy_short"
+        android:shortcutLongLabel="@string/shortcut_deploy_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="pro.antigravity.voice"
+            android:targetClass="pro.antigravity.voice.AntiVoiceActivity">
+            <extra
+                android:name="target_action"
+                android:value="deploy" />
+        </intent>
+        <capability-binding android:key="actions.intent.OPEN_APP_FEATURE">
+            <parameter-binding
+                android:key="feature"
+                android:value="@string/shortcut_deploy_short" />
+        </capability-binding>
+    </shortcut>
+
+    <!-- Shortcut 5: Summarize Commits -->
+    <shortcut
+        android:shortcutId="shortcut_summarize_commits"
+        android:enabled="true"
+        android:icon="@drawable/ic_antigravity_logo"
+        android:shortcutShortLabel="@string/shortcut_commits_short"
+        android:shortcutLongLabel="@string/shortcut_commits_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="pro.antigravity.voice"
+            android:targetClass="pro.antigravity.voice.AntiVoiceActivity">
+            <extra
+                android:name="target_action"
+                android:value="commits" />
+        </intent>
+        <capability-binding android:key="actions.intent.OPEN_APP_FEATURE">
+            <parameter-binding
+                android:key="feature"
+                android:value="@string/shortcut_commits_short" />
+        </capability-binding>
+    </shortcut>
+
+</shortcuts>

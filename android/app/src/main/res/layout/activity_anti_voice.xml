@@ -1,0 +1,468 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg_space"
+    android:paddingStart="16dp"
+    android:paddingEnd="16dp"
+    android:clipToPadding="false">
+
+    <!-- Top App Bar & Status Header -->
+    <LinearLayout
+        android:id="@+id/headerLayout"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="center_horizontal"
+        android:layout_marginTop="8dp"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <ImageView
+                    android:layout_width="28dp"
+                    android:layout_height="28dp"
+                    android:src="@drawable/ic_antigravity_logo"
+                    android:contentDescription="Antigravity Logo" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="10dp"
+                    android:text="@string/header_title"
+                    android:textColor="@color/cyan_accent"
+                    android:textSize="20sp"
+                    android:textStyle="bold"
+                    android:letterSpacing="0.08" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/btnHeaderVoice"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_chip"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:clickable="true"
+                android:focusable="true"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:paddingTop="6dp"
+                android:paddingBottom="6dp">
+
+                <ImageView
+                    android:layout_width="14dp"
+                    android:layout_height="14dp"
+                    android:src="@drawable/ic_volume_24"
+                    app:tint="@color/cyan_accent"
+                    android:contentDescription="Voice Engine" />
+
+                <TextView
+                    android:id="@+id/tvHeaderVoiceName"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:text="Voice: System"
+                    android:textColor="@color/cyan_accent"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:letterSpacing="0.05" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:text="@string/header_subtitle"
+            android:textColor="@color/text_secondary"
+            android:textSize="11sp"
+            android:letterSpacing="0.12" />
+
+        <!-- Status & Model Badge Row -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <LinearLayout
+                android:id="@+id/statusPill"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_status_pill"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:paddingTop="5dp"
+                android:paddingBottom="5dp">
+
+                <View
+                    android:id="@+id/dotStatus"
+                    android:layout_width="8dp"
+                    android:layout_height="8dp"
+                    android:background="@drawable/bg_pulse_dot" />
+
+                <TextView
+                    android:id="@+id/tvWorkstationStatus"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:text="@string/status_online"
+                    android:textColor="@color/status_online"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:letterSpacing="0.05" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:background="@drawable/bg_status_pill"
+                android:text="@string/model_badge"
+                android:textColor="@color/text_mono"
+                android:textSize="11sp"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:paddingTop="5dp"
+                android:paddingBottom="5dp" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- Quick SRE Action Chips (Horizontal Scroll) -->
+    <HorizontalScrollView
+        android:id="@+id/scrollChips"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:scrollbars="none"
+        app:layout_constraintTop_toBottomOf="@id/headerLayout">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/chipTests"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="8dp"
+                android:background="@drawable/bg_chip"
+                android:text="@string/chip_tests"
+                android:textColor="@color/text_primary"
+                android:textSize="12sp" />
+
+            <TextView
+                android:id="@+id/chipGit"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="8dp"
+                android:background="@drawable/bg_chip"
+                android:text="@string/chip_git"
+                android:textColor="@color/text_primary"
+                android:textSize="12sp" />
+
+            <TextView
+                android:id="@+id/chipHealth"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="8dp"
+                android:background="@drawable/bg_chip"
+                android:text="@string/chip_health"
+                android:textColor="@color/text_primary"
+                android:textSize="12sp" />
+
+            <TextView
+                android:id="@+id/chipDeploy"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="8dp"
+                android:background="@drawable/bg_chip"
+                android:text="@string/chip_deploy"
+                android:textColor="@color/text_primary"
+                android:textSize="12sp" />
+
+            <TextView
+                android:id="@+id/chipCommits"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="8dp"
+                android:background="@drawable/bg_chip"
+                android:text="@string/chip_commits"
+                android:textColor="@color/text_primary"
+                android:textSize="12sp" />
+        </LinearLayout>
+    </HorizontalScrollView>
+
+    <!-- Scrollable Central Workspace / History Area -->
+    <ScrollView
+        android:id="@+id/scrollContent"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_marginTop="12dp"
+        android:layout_marginBottom="12dp"
+        android:fillViewport="true"
+        app:layout_constraintTop_toBottomOf="@id/scrollChips"
+        app:layout_constraintBottom_toTopOf="@id/micSection">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <!-- Spoken Instruction Card -->
+            <LinearLayout
+                android:id="@+id/cardSpoken"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_card"
+                android:orientation="vertical"
+                android:padding="14dp"
+                android:layout_marginBottom="12dp"
+                android:visibility="gone"
+                tools:visibility="visible">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/spoken_instruction_header"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="10sp"
+                    android:textStyle="bold"
+                    android:letterSpacing="0.08" />
+
+                <TextView
+                    android:id="@+id/tvSpokenText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:textColor="@color/text_primary"
+                    android:textSize="15sp"
+                    android:fontFamily="monospace"
+                    tools:text="&gt; Anti, run unit tests and report status" />
+            </LinearLayout>
+
+            <!-- Desktop Response Card -->
+            <LinearLayout
+                android:id="@+id/cardResponse"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_card"
+                android:orientation="vertical"
+                android:padding="14dp"
+                android:visibility="gone"
+                tools:visibility="visible">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/desktop_response_header"
+                        android:textColor="@color/cyan_accent"
+                        android:textSize="11sp"
+                        android:textStyle="bold"
+                        android:letterSpacing="0.06" />
+
+                    <TextView
+                        android:id="@+id/tvExecutionStatus"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:background="@drawable/bg_status_pill"
+                        android:text="EXECUTED"
+                        android:textColor="@color/status_online"
+                        android:textSize="10sp"
+                        android:textStyle="bold"
+                        android:paddingStart="8dp"
+                        android:paddingEnd="8dp"
+                        android:paddingTop="3dp"
+                        android:paddingBottom="3dp" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/tvResponseText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:textColor="@color/text_primary"
+                    android:textSize="15sp"
+                    android:lineSpacingExtra="5dp"
+                    android:textIsSelectable="true"
+                    tools:text="All 28 unit tests passing 100%. Gate T topology verified clean. Production health returning HTTP 200." />
+
+                <!-- Action Controls Row -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:orientation="horizontal"
+                    android:gravity="end">
+
+                    <TextView
+                        android:id="@+id/btnReplayVoice"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:background="@drawable/bg_chip"
+                        android:drawableStart="@drawable/ic_volume_24"
+                        android:drawablePadding="6dp"
+                        android:text="@string/btn_replay"
+                        android:textColor="@color/cyan_accent"
+                        android:textSize="12sp"
+                        android:paddingStart="12dp"
+                        android:paddingEnd="12dp"
+                        android:paddingTop="6dp"
+                        android:paddingBottom="6dp" />
+
+                    <TextView
+                        android:id="@+id/btnVoiceSettings"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:background="@drawable/bg_chip"
+                        android:drawableStart="@drawable/ic_settings_24"
+                        android:drawablePadding="6dp"
+                        android:text="@string/btn_settings"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="12sp"
+                        android:paddingStart="12dp"
+                        android:paddingEnd="12dp"
+                        android:paddingTop="6dp"
+                        android:paddingBottom="6dp" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- Idle Welcome / Guidance Card when no active query -->
+            <LinearLayout
+                android:id="@+id/cardWelcome"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_card"
+                android:orientation="vertical"
+                android:padding="16dp"
+                android:gravity="center">
+
+                <ImageView
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:src="@drawable/ic_antigravity_logo"
+                    android:contentDescription="Antigravity Star" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="Hands-Free Ambient Pair Programming"
+                    android:textColor="@color/text_primary"
+                    android:textSize="15sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:text="Speak instructions or tap any preset chip. Commands are relayed directly to your desktop Google Antigravity IDE and spoken aloud in real-time."
+                    android:textColor="@color/text_secondary"
+                    android:textSize="12sp"
+                    android:gravity="center"
+                    android:lineSpacingExtra="2dp" />
+            </LinearLayout>
+        </LinearLayout>
+    </ScrollView>
+
+    <!-- Central Glowing Mic Section -->
+    <LinearLayout
+        android:id="@+id/micSection"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:layout_marginBottom="16dp"
+        app:layout_constraintBottom_toTopOf="@id/inputBar">
+
+        <ImageButton
+            android:id="@+id/btnMic"
+            android:layout_width="76dp"
+            android:layout_height="76dp"
+            android:background="@drawable/bg_mic_button"
+            android:src="@drawable/ic_mic_24"
+            android:elevation="8dp"
+            android:contentDescription="Speak to Antigravity" />
+
+        <TextView
+            android:id="@+id/tvMicPrompt"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/tap_to_speak"
+            android:textColor="@color/cyan_accent"
+            android:textSize="13sp"
+            android:letterSpacing="0.04" />
+
+        <ProgressBar
+            android:id="@+id/progressWorking"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="140dp"
+            android:layout_height="4dp"
+            android:layout_marginTop="6dp"
+            android:indeterminate="true"
+            android:indeterminateTint="@color/cyan_accent"
+            android:visibility="invisible" />
+    </LinearLayout>
+
+    <!-- Bottom Manual Command Input Bar -->
+    <LinearLayout
+        android:id="@+id/inputBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="12dp"
+        app:layout_constraintBottom_toBottomOf="parent">
+
+        <EditText
+            android:id="@+id/etCommandInput"
+            android:layout_width="0dp"
+            android:layout_height="44dp"
+            android:layout_weight="1"
+            android:background="@drawable/bg_input_field"
+            android:hint="@string/input_hint"
+            android:textColor="@color/text_primary"
+            android:textColorHint="@color/text_tertiary"
+            android:textSize="13sp"
+            android:imeOptions="actionSend"
+            android:inputType="textCapSentences"
+            android:maxLines="1" />
+
+        <ImageButton
+            android:id="@+id/btnSend"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/bg_status_pill"
+            android:src="@drawable/ic_send_24"
+            android:contentDescription="Send Command" />
+    </LinearLayout>
+
+</androidx.constraintlayout.widget.ConstraintLayout>

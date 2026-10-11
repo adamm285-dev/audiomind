@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/rowVoice"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginBottom="8dp"
+    android:background="@drawable/bg_chip"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:paddingStart="12dp"
+    android:paddingEnd="10dp"
+    android:paddingTop="10dp"
+    android:paddingBottom="10dp"
+    android:clickable="true"
+    android:focusable="true">
+
+    <ImageView
+        android:id="@+id/ivSelectedCheck"
+        android:layout_width="20dp"
+        android:layout_height="20dp"
+        android:src="@drawable/ic_check_24"
+        android:visibility="invisible"
+        android:contentDescription="Selected" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:layout_marginStart="10dp"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/tvVoiceFriendlyName"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="@color/text_primary"
+            android:textSize="13sp"
+            android:textStyle="bold"
+            tools:text="Voice IV • Warm Female (Ava Style)" />
+
+        <TextView
+            android:id="@+id/tvVoiceId"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="1dp"
+            android:textColor="@color/text_secondary"
+            android:textSize="11sp"
+            tools:text="en-us-x-iod-network • High Quality" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/btnTestVoice"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:background="@drawable/bg_status_pill"
+        android:drawableStart="@drawable/ic_play_24"
+        android:drawablePadding="4dp"
+        android:text="Test"
+        android:textColor="@color/cyan_accent"
+        android:textSize="11sp"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp"
+        android:paddingTop="5dp"
+        android:paddingBottom="5dp" />
+</LinearLayout>

@@ -1,0 +1,14 @@
+# Antigravity Voice Assistant — Desktop Requirements
+pystray==0.19.5
+Pillow==10.4.0
+numpy==1.26.4
+onnxruntime==1.19.2
+openwakeword==0.6.0
+PyAudioWPatch==0.2.12.8
+SpeechRecognition==3.10.4
+edge-tts==6.1.12
+sounddevice==0.5.1
+pywin32==306
+pyperclip==1.9.0
+python-dotenv==1.0.1
+pytest==8.3.3

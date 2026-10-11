@@ -1,0 +1,1 @@
+"""AudioMind desktop client package."""

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.AntiVoice" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/cyan_accent</item>
+        <item name="colorSecondary">@color/electric_blue</item>
+        <item name="android:statusBarColor">@color/bg_space</item>
+        <item name="android:navigationBarColor">@color/bg_space</item>
+        <item name="android:windowBackground">@color/bg_space</item>
+    </style>
+</resources>

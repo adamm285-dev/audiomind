@@ -1,0 +1,49 @@
+# Declarative Topology (The Mesh)
+# SPEC-001 v1.9.0 Pillar 2 | Mutability: STATIC (Explicit PR)
+
+version: "1.9.0"
+subsystems:
+  desktop:
+    path: "desktop/"
+    responsibilities: "Windows taskbar system tray app, translucent waveform HUD, WASAPI AEC audio capture, and AST command firewall"
+    allowed_dependencies: []
+  relay:
+    path: "relay/"
+    responsibilities: "FastAPI cloud broker, SQLite/PostgreSQL persistence, and token-authenticated agent dispatch queue"
+    allowed_dependencies: []
+  android:
+    path: "android/"
+    responsibilities: "Android Kotlin companion app, Google Assistant voice triggers, App Actions, and neural TTS playback"
+    allowed_dependencies: []
+
+tool_boundaries:
+  allowed_binaries: ["pytest", "git", "python", "gradlew", "adb", "sdcs"]
+  forbidden_flags: ["--no-verify"]
+
+sandbox:
+  protected_paths:
+    - ".env*"
+    - "*.jks"
+    - "*.pem"
+    - "*.key"
+    - "credentials/**"
+  allowed_commands:
+    - "pytest"
+    - "git"
+    - "python"
+    - "gradlew"
+    - "sdcs"
+  prohibited_flags:
+    - "--no-verify"
+
+contracts:
+  strict_imports: true
+  circular_dependencies: false
+
+warehouse:
+  source: ""
+  cache_dir: "~/.sdcs/warehouse"
+  subscriptions:
+    tags: ["voice", "antigravity", "desktop", "android", "relay"]
+    severity_floor: "advisory"
+  auto_sync: false

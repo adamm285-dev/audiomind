@@ -1,0 +1,18 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:pivotX="50"
+        android:pivotY="50"
+        android:scaleX="0.68"
+        android:scaleY="0.68"
+        android:translateX="4"
+        android:translateY="4">
+        <!-- Antigravity Parabolic Arch Homage Launcher Foreground -->
+        <path
+            android:fillColor="#00F0FF"
+            android:pathData="M 50,13 C 58,13 67,23 71,43 C 74,58 79,72 88,83 C 91,86 87,88 83,86 C 76,81 69,68 64,57 C 59,48 55,46 50,46 C 45,46 41,48 36,57 C 31,68 24,81 17,86 C 13,88 9,86 12,83 C 21,72 26,58 29,43 C 33,23 42,13 50,13 Z" />
+    </group>
+</vector>
