@@ -531,6 +531,53 @@ def test_hud_right_click_and_double_click_callbacks():
     assert hud._on_canvas_double_click() == "break"
     assert len(right_clicks) == 2
 
+def test_skip_next_chapter_right_click_workflow(monkeypatch):
+    """Verify skip_next_chapter advances chapters, unpauses, and cascades to skip_current_output when queue is waiting."""
+    import desktop.app as app_module
+    from desktop.app import SpeechQueueItem
+
+    # Dummy assistant state
+    class DummyAssistant:
+        def __init__(self):
+            self.speech_queue = []
+            self.current_speech_item = SpeechQueueItem("Test", filepath=r"C:\test\32caa6ee-0000\log.jsonl")
+            self.hud_enabled = True
+            self.hud = type("DummyHud", (), {"set_status": lambda *a, **k: None})()
+            self.skipped_output = False
+
+        def skip_current_output(self, icon=None, item=None):
+            self.skipped_output = True
+
+    asst = DummyAssistant()
+
+    # 1. When speech is inactive -> does nothing
+    monkeypatch.setattr(app_module, "is_speech_active", lambda: False)
+    app_module.AntiTrayApp.skip_next_chapter(asst)
+    assert asst.skipped_output is False
+
+    # 2. When speech is active and chapter 1 of 3
+    chapter_state = [1, 3, "Overview"]
+    monkeypatch.setattr(app_module, "is_speech_active", lambda: True)
+    monkeypatch.setattr(app_module, "get_chapter_info", lambda: tuple(chapter_state))
+    monkeypatch.setattr(app_module, "is_paused", lambda: True)
+    resumed = []
+    monkeypatch.setattr(app_module, "resume_speech", lambda: resumed.append(True))
+    skipped_ch = []
+    monkeypatch.setattr(app_module, "skip_to_next_chapter", lambda: skipped_ch.append(True))
+    monkeypatch.setattr(app_module, "play_chime", lambda rising=True: None)
+
+    app_module.AntiTrayApp.skip_next_chapter(asst)
+    assert len(skipped_ch) == 1
+    assert len(resumed) == 1
+    assert asst.skipped_output is False
+
+    # 3. When on final chapter (3 of 3) and queue is NOT empty -> cascades to skip_current_output
+    chapter_state[0] = 3
+    asst.speech_queue.append(SpeechQueueItem("Next speech item"))
+    app_module.AntiTrayApp.skip_next_chapter(asst)
+    assert asst.skipped_output is True
+
+
 
 
 

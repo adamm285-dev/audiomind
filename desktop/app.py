@@ -667,10 +667,13 @@ class AntiTrayApp:
         self.remote_poll_enabled = bool(self.remote_api_url and token)
         self._speak_lock = threading.Lock()
 
-        # Initialize HUD in background thread with click and skip triggers
+        # Initialize HUD in background thread with intuitive click controls:
+        # - Left-Click: Pause / Resume playback
+        # - Right-Click: Skip to next chapter (or next output if on final chapter)
+        # - Double-Click: Skip entire response immediately to next output
         self.hud = WaveformHud()
         self.hud.on_click = self.toggle_speech_pause
-        self.hud.on_right_click = self.skip_current_output
+        self.hud.on_right_click = self.skip_next_chapter
         self.hud.on_double_click = self.skip_current_output
         self.hud.start()
 
@@ -846,13 +849,35 @@ class AntiTrayApp:
         print(f"[*] Speech Rewound 10s -> position: {new_pos:.1f}s")
 
     def skip_next_chapter(self, icon=None, item=None):
+        """
+        Skip to the next chapter of the current response.
+        If already on the final chapter and more responses are queued, advances to next queued output.
+        """
+        if not is_speech_active():
+            return
+
+        cur_ch, tot_ch, _ = get_chapter_info()
+        q_count = len(self.speech_queue)
+
+        # If on final chapter (or single-chapter) and more outputs are waiting, skip to next queued output
+        if cur_ch >= tot_ch and q_count > 0:
+            print("[⏭️ SKIP NEXT]: At final chapter with queued items -> advancing to next output")
+            self.skip_current_output()
+            return
+
         new_ch = skip_to_next_chapter()
         cur_ch, tot_ch, title = get_chapter_info()
+        if is_paused():
+            resume_speech()
+        try:
+            play_chime(rising=True)
+        except Exception:
+            pass
+
         chat_tag = f"[{self.current_speech_item.chat_tag}] " if (self.current_speech_item and self.current_speech_item.chat_tag) else ""
-        q_count = len(self.speech_queue)
         q_str = f" • Q:{q_count}" if q_count > 0 else ""
         if self.hud_enabled:
-            self.hud.set_status(f"{chat_tag}Ch {cur_ch}/{tot_ch}: {title[:16]}{q_str}", state="speaking" if is_speaking() else "paused")
+            self.hud.set_status(f"{chat_tag}Ch {cur_ch}/{tot_ch}: {title[:16]}{q_str}", state="speaking")
         print(f"[*] Skipped to Next Chapter -> Chapter {cur_ch}/{tot_ch} ({title})")
 
     def skip_current_output(self, icon=None, item=None):
