@@ -3,12 +3,12 @@
 <!-- Read on Turn 1 boot. Strictly pruned after milestone completion. -->
 
 ## Current Objective
-- 460px Dual-Deck HUD, Chat Name Isolation, Complete Chapter Synthesis & Cloud Cost Clarity.
+- Paused Audio Auto-Advance & Multi-Step Output History Navigation.
 
 ## Status & Gate Verification
-- [x] 460px Dual-Deck HUD: Expanded width to 460px with 66px buttons and 8px gaps. Isolated bracketed chat name (`[Chat]`) in LCD pocket, eliminating spectrum analyzer collision.
-- [x] Full Chapter Reading: Removed artificial `[:6]` slice in `extract_chapters_from_text`; 100% of chapters/sections now read aloud without truncation.
-- [x] Verification: 51/51 desktop tests passed, 7/7 relay tests passed. Gate T AST topology and Gate M cartography 100% clean.
+- [x] Issue 1 (Paused Auto-Advance): If speech is paused when a new response arrives from any session/agent, audio automatically terminates pause and advances immediately into playback.
+- [x] Issue 2 (Multi-Step Back Navigation): 20-item ring buffer (`output_history`). Step back 1, 2, or 3+ times via voice ("previous output", "go back one output"), HUD `[⏮]`, tray menu, or `Ctrl+Alt+P`.
+- [x] Verification: 54/54 desktop tests passed, 7/7 relay tests passed. Topology & cartography verified. Synced to `adamm285-dev/audiomind` on `main`.
 
 ## Immediate Next Action (Post-Compact)
-- Inform user of zero cloud API costs, 460px HUD, chat tag display, and complete chapter fix.
+- Present verified solutions for Issues 1 and 2 to user.
