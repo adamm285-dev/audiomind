@@ -509,6 +509,13 @@ def match_playback_intent(text: str, speech_active: bool) -> Optional[str]:
         "skip output", "next output", "skip response", "next response",
         "skip to next output", "skip to next response"
     }
+    PREVIOUS_OUTPUT_COMMANDS = {
+        "previous output", "last output", "go back output", "go back an output",
+        "go back one output", "go back 1 output", "previous response", "last response",
+        "go back a response", "go back one response", "read previous output",
+        "re-read last output", "replay previous output", "replay last output",
+        "read last output", "re-read last response", "read previous response"
+    }
 
     if clean in PAUSE_COMMANDS:
         return "PAUSE"
@@ -524,6 +531,8 @@ def match_playback_intent(text: str, speech_active: bool) -> Optional[str]:
         return "STOP"
     if clean in SKIP_OUTPUT_COMMANDS:
         return "SKIP_OUTPUT"
+    if clean in PREVIOUS_OUTPUT_COMMANDS:
+        return "PREVIOUS_OUTPUT"
 
     return None
 
@@ -678,8 +687,10 @@ class AntiTrayApp:
         self._focused_pid = None
         self.last_app_hwnd = None
 
-        # Speech Queue for sequential multi-agent / multi-turn playback & skip control
+        # Speech Queue & Output History for sequential playback and bidirectional navigation
         self.speech_queue: deque = deque()
+        self.output_history: list[SpeechQueueItem] = []
+        self.history_cursor: int = -1
         self.current_speech_item: Optional[SpeechQueueItem] = None
         self._speech_worker_event = threading.Event()
         self._speech_worker_thread = None
@@ -869,9 +880,9 @@ class AntiTrayApp:
             item("⏪  Rewind 5 Seconds", self.rewind_speech_5, enabled=lambda it: is_speech_active()),
             item("⏭️  Skip to Next Chapter", self.skip_next_chapter, enabled=lambda it: is_speech_active()),
             item(lambda it: f"⏭️  Skip to Next Output ({len(self.speech_queue)} queued)" if len(self.speech_queue) > 0 else "⏭️  Skip to Next Output  (Ctrl+Alt+N)", self.skip_current_output, enabled=lambda it: is_speech_active() or len(self.speech_queue) > 0),
-            item("⏮️  Repeat Last Chapter", self.repeat_chapter, enabled=lambda it: is_speech_active() or bool(self.last_spoken_summary)),
+            item("⏮️  Repeat Last Chapter", self.repeat_chapter, enabled=lambda it: is_speech_active() or bool(self.last_spoken_summary) or len(self.output_history) > 0),
+            item(lambda it: f"⏮️  Previous Output (Go Back)" if len(self.output_history) > 1 else "⏮️  Replay Last Output  (Ctrl+Alt+P)", self.go_back_output, enabled=lambda it: len(self.output_history) > 0 or bool(self.last_spoken_summary)),
             item("⏹️  Stop Speaking / Interrupt", self.interrupt_speech, enabled=lambda it: is_speech_active() or len(self.speech_queue) > 0),
-            item("🔁  Replay Last Response", self.replay_last_response),
             item("📖  Read Highlighted Text  (Ctrl+Alt+R)", self.read_highlighted_text),
             pystray.Menu.SEPARATOR,
             item("🗣️  Voice Selection", pystray.Menu(
@@ -1049,16 +1060,65 @@ class AntiTrayApp:
             else:
                 self.set_tray_state("muted", "AudioMind: Microphone Muted")
 
+    def go_back_output(self, icon=None, item=None):
+        """
+        Steps backward in output history and replays the previous assistant response.
+        Can be called multiple times (1, 2, 3+ times) to step back through recent outputs.
+        """
+        print("[⏮️ GO BACK OUTPUT]: Stepping back in output history...")
+        with self._speak_lock:
+            if not self.output_history:
+                if self.last_spoken_summary:
+                    self.replay_last_response()
+                    return
+                print("[!] No previous output available in history.")
+                if self.hud_enabled:
+                    self.hud.set_status("No Previous Output", state="idle")
+                return
+
+            if self.history_cursor > 0:
+                self.history_cursor -= 1
+            else:
+                self.history_cursor = 0
+
+            target_item = self.output_history[self.history_cursor]
+            print(f"[⏮️ PREVIOUS OUTPUT]: Playing output {self.history_cursor + 1}/{len(self.output_history)} (Chat: '{target_item.chat_tag}')")
+
+            stop_speech()
+            play_chime(rising=False)
+
+            self.speech_queue.appendleft(target_item)
+
+            if self.hud_enabled:
+                chat_prefix = f"[{target_item.chat_tag}]" if target_item.chat_tag else "AudioMind"
+                self.hud.show(state="speaking", status=chat_prefix)
+
+            self._speech_worker_event.set()
+
     def repeat_chapter(self, icon=None, item=None):
         if is_speech_active():
+            cur_ch, tot_ch, title = get_chapter_info()
+            # If on chapter 1 and user presses repeat chapter at the start (< 2.5s),
+            # cascade to go_back_output() if output history exists!
+            try:
+                from desktop.audio.tts import global_player
+                pos = getattr(global_player, "position_seconds", 0.0)
+            except Exception:
+                pos = 0.0
+
+            if cur_ch <= 1 and pos < 2.5 and len(self.output_history) > 1:
+                print("[⏮️ PREV CHAPTER AT START]: At start of output, stepping back to previous output.")
+                self.go_back_output()
+                return
+
             new_ch = repeat_last_chapter()
             cur_ch, tot_ch, title = get_chapter_info()
-            chat_tag = f"[{self.current_speech_item.chat_tag}] " if (self.current_speech_item and self.current_speech_item.chat_tag) else ""
-            q_count = len(self.speech_queue)
-            q_str = f" • Q:{q_count}" if q_count > 0 else ""
+            chat_tag = f"[{self.current_speech_item.chat_tag}]" if (self.current_speech_item and self.current_speech_item.chat_tag) else ""
             if self.hud_enabled:
-                self.hud.set_status(f"{chat_tag}Ch {cur_ch}/{tot_ch}: {title[:16]}{q_str}", state="speaking" if is_speaking() else "paused")
+                self.hud.set_status(chat_tag or "Speaking", state="speaking" if is_speaking() else "paused")
             print(f"[*] Repeated Chapter -> Chapter {cur_ch}/{tot_ch} ({title})")
+        elif len(self.output_history) > 0:
+            self.go_back_output()
         elif self.last_spoken_summary:
             self.replay_last_response()
 
@@ -1234,19 +1294,27 @@ class AntiTrayApp:
 
         queue_item = SpeechQueueItem(text=text, filepath=filepath, step_index=step_index)
         with self._speak_lock:
+            # Maintain output history buffer (up to 20 outputs)
+            if not self.output_history or self.output_history[-1].text != text:
+                self.output_history.append(queue_item)
+                if len(self.output_history) > 20:
+                    self.output_history.pop(0)
+            self.history_cursor = len(self.output_history) - 1
+
             self.speech_queue.append(queue_item)
             q_len = len(self.speech_queue)
 
         print(f"[📥 SPEECH QUEUED]: Chat='{queue_item.chat_tag or 'general'}' ({q_len} in queue)")
 
-        # If already speaking, update HUD to display updated queue counter
-        if is_speaking() and self.hud_enabled:
-            cur_ch, tot_ch, title = get_chapter_info()
-            chat_tag = f"[{self.current_speech_item.chat_tag}] " if (self.current_speech_item and self.current_speech_item.chat_tag) else ""
-            if tot_ch > 1:
-                self.hud.set_status(f"{chat_tag}Ch {cur_ch}/{tot_ch} • Q:{q_len}", state="speaking")
-            else:
-                self.hud.set_status(f"{chat_tag}Speaking • Q:{q_len}", state="speaking")
+        # ISSUE 1 RESOLUTION:
+        # If speech is currently PAUSED, the user paused/stopped listening to the previous output.
+        # Immediately stop paused speech so the new response begins playing automatically!
+        if is_paused():
+            print("[⚡ NEW RESPONSE ARRIVED WHILE PAUSED]: Automatically advancing to newly arrived output.")
+            stop_speech()
+        elif is_speaking() and self.hud_enabled:
+            chat_tag = f"[{self.current_speech_item.chat_tag}]" if (self.current_speech_item and self.current_speech_item.chat_tag) else ""
+            self.hud.set_status(chat_tag or "Speaking", state="speaking")
 
         # Wake worker loop
         self._speech_worker_event.set()
@@ -1839,17 +1907,22 @@ class AntiTrayApp:
                                 wake_cooldown_until = time.time() + 0.5
                                 continue
 
+                            elif intent == "PREVIOUS_OUTPUT":
+                                self.go_back_output()
+                                aec_stream.drain()
+                                self.model.reset()
+                                wake_cooldown_until = time.time() + 0.5
+                                continue
+
                             elif intent == "NEXT_CHAPTER":
                                 new_ch = skip_to_next_chapter()
                                 cur_ch, tot_ch, title = get_chapter_info()
                                 if not is_speaking():
                                     resume_speech()
                                 play_chime(rising=True)
-                                chat_tag = f"[{self.current_speech_item.chat_tag}] " if (self.current_speech_item and self.current_speech_item.chat_tag) else ""
-                                q_count = len(self.speech_queue)
-                                q_str = f" • Q:{q_count}" if q_count > 0 else ""
+                                chat_tag = f"[{self.current_speech_item.chat_tag}]" if (self.current_speech_item and self.current_speech_item.chat_tag) else ""
                                 if self.hud_enabled:
-                                    self.hud.set_status(f"{chat_tag}Ch {cur_ch}/{tot_ch}: {title[:16]}{q_str}", state="speaking")
+                                    self.hud.set_status(chat_tag or "Speaking", state="speaking")
                                 print(f"[⏭️ VOICE COMMAND]: Skipped to Chapter {cur_ch}/{tot_ch} ({title}).")
                                 aec_stream.drain()
                                 self.model.reset()
@@ -1857,20 +1930,7 @@ class AntiTrayApp:
                                 continue
 
                             elif intent == "REPEAT_CHAPTER":
-                                if is_speech_active():
-                                    new_ch = repeat_last_chapter()
-                                    cur_ch, tot_ch, title = get_chapter_info()
-                                    if not is_speaking():
-                                        resume_speech()
-                                    play_chime(rising=True)
-                                    chat_tag = f"[{self.current_speech_item.chat_tag}] " if (self.current_speech_item and self.current_speech_item.chat_tag) else ""
-                                    q_count = len(self.speech_queue)
-                                    q_str = f" • Q:{q_count}" if q_count > 0 else ""
-                                    if self.hud_enabled:
-                                        self.hud.set_status(f"{chat_tag}Ch {cur_ch}/{tot_ch}: {title[:16]}{q_str}", state="speaking")
-                                    print(f"[⏮️ VOICE COMMAND]: Repeated Chapter {cur_ch}/{tot_ch} ({title}).")
-                                elif self.last_spoken_summary:
-                                    self.replay_last_response()
+                                self.repeat_chapter()
                                 aec_stream.drain()
                                 self.model.reset()
                                 wake_cooldown_until = time.time() + 0.5
@@ -2093,7 +2153,7 @@ class AntiTrayApp:
             time.sleep(1.5)
 
     def _start_hotkey_listener(self):
-        """Registers Ctrl+Alt+R (Read Highlight), Ctrl+Alt+M (Mute), and Ctrl+Alt+N (Skip Output) hotkeys."""
+        """Registers Ctrl+Alt+R (Read Highlight), Ctrl+Alt+M (Mute), Ctrl+Alt+N (Skip Output), and Ctrl+Alt+P (Previous Output) hotkeys."""
         def _listener():
             if sys.platform != "win32":
                 return
@@ -2101,11 +2161,13 @@ class AntiTrayApp:
             HOTKEY_READ = 2026
             HOTKEY_MUTE = 2027
             HOTKEY_SKIP = 2028
+            HOTKEY_PREV = 2029
             MOD_ALT = 0x0001
             MOD_CONTROL = 0x0002
             VK_R = 0x52  # 'R' key
             VK_M = 0x4D  # 'M' key
             VK_N = 0x4E  # 'N' key
+            VK_P = 0x50  # 'P' key
 
             if user32.RegisterHotKey(None, HOTKEY_READ, MOD_CONTROL | MOD_ALT, VK_R):
                 print("[*] Global hotkey registered: Ctrl+Alt+R -> Read Highlighted Text")
@@ -2121,6 +2183,11 @@ class AntiTrayApp:
                 print("[*] Global hotkey registered: Ctrl+Alt+N -> Skip to Next Output")
             else:
                 print("[!] Global hotkey Ctrl+Alt+N could not be registered.")
+
+            if user32.RegisterHotKey(None, HOTKEY_PREV, MOD_CONTROL | MOD_ALT, VK_P):
+                print("[*] Global hotkey registered: Ctrl+Alt+P -> Previous Output (Go Back)")
+            else:
+                print("[!] Global hotkey Ctrl+Alt+P could not be registered.")
 
             try:
                 msg = wintypes.MSG()
@@ -2138,6 +2205,9 @@ class AntiTrayApp:
                         elif msg.wParam == HOTKEY_SKIP:
                             print("[⌨️ GLOBAL HOTKEY]: Ctrl+Alt+N triggered -> Skipping to next output.")
                             self.skip_current_output()
+                        elif msg.wParam == HOTKEY_PREV:
+                            print("[⌨️ GLOBAL HOTKEY]: Ctrl+Alt+P triggered -> Going back to previous output.")
+                            self.go_back_output()
                     user32.TranslateMessage(ctypes.byref(msg))
                     user32.DispatchMessageW(ctypes.byref(msg))
             except Exception as e:
@@ -2146,6 +2216,7 @@ class AntiTrayApp:
                 user32.UnregisterHotKey(None, HOTKEY_READ)
                 user32.UnregisterHotKey(None, HOTKEY_MUTE)
                 user32.UnregisterHotKey(None, HOTKEY_SKIP)
+                user32.UnregisterHotKey(None, HOTKEY_PREV)
 
         threading.Thread(target=_listener, daemon=True).start()
 

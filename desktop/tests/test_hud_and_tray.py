@@ -805,6 +805,7 @@ def test_tray_menu_settings_submenu(monkeypatch):
             self.hud_enabled = True
             self.remote_poll_enabled = False
             self.speech_queue = []
+            self.output_history = []
             self.last_spoken_summary = ""
             self.hud = type("DummyHud", (), {"theme": "cyberpunk", "position": "bottom_right"})()
             self.current_speech_item = None
@@ -821,6 +822,7 @@ def test_tray_menu_settings_submenu(monkeypatch):
         def skip_next_chapter(self, icon=None, item=None): pass
         def skip_current_output(self, icon=None, item=None): pass
         def repeat_chapter(self, icon=None, item=None): pass
+        def go_back_output(self, icon=None, item=None): pass
         def interrupt_speech(self, icon=None, item=None): pass
         def replay_last_response(self, icon=None, item=None): pass
         def read_highlighted_text(self, icon=None, item=None): pass
@@ -866,6 +868,150 @@ def test_tray_menu_settings_submenu(monkeypatch):
     assert any("Remote Assistant Dispatch Listener" in t for t in settings_texts)
     assert any("Test Voice Greeting" in t for t in settings_texts)
     assert any("Open Firewall State" in t for t in settings_texts)
+
+
+def test_match_playback_intent_previous_output():
+    """Verify voice intent matcher recognizes PREVIOUS_OUTPUT phrases when active and gates when inactive."""
+    from desktop.app import match_playback_intent
+
+    prev_phrases = [
+        "previous output",
+        "last output",
+        "go back output",
+        "go back an output",
+        "go back one output",
+        "go back 1 output",
+        "previous response",
+        "last response",
+        "go back a response",
+        "go back one response",
+        "read previous output",
+        "re-read last output",
+        "replay previous output",
+        "replay last output",
+        "read last output",
+        "re-read last response",
+        "read previous response",
+    ]
+
+    for p in prev_phrases:
+        assert match_playback_intent(p, speech_active=True) == "PREVIOUS_OUTPUT", f"Phrase '{p}' did not match PREVIOUS_OUTPUT while active"
+        assert match_playback_intent(p, speech_active=False) is None, f"Phrase '{p}' should not match when inactive"
+
+
+def test_paused_speech_auto_advances_on_new_response(monkeypatch):
+    """Verify that when a new assistant response arrives while speech is paused, AudioMind stops paused audio to auto-advance."""
+    import collections
+    import threading
+    import desktop.app as app_module
+    from desktop.app import SpeechQueueItem
+
+    class DummyApp:
+        def __init__(self):
+            self.last_spoken_summary = ""
+            self.auto_read = True
+            self.output_history = []
+            self.history_cursor = -1
+            self.speech_queue = collections.deque()
+            self._speak_lock = threading.Lock()
+            self._speech_worker_event = threading.Event()
+            self.hud_enabled = True
+            self.hud = type("DummyHud", (), {"set_status": lambda *a, **k: None})()
+            self.current_speech_item = None
+
+    app = DummyApp()
+    stopped_calls = []
+    monkeypatch.setattr(app_module, "is_paused", lambda: True)
+    monkeypatch.setattr(app_module, "stop_speech", lambda: stopped_calls.append(True))
+    monkeypatch.setattr(app_module, "is_speaking", lambda: False)
+
+    app_module.AntiTrayApp._on_assistant_response(app, "First response after user paused prior audio", filepath="file1.jsonl", step_index=1)
+
+    assert len(stopped_calls) == 1, "stop_speech() should be called when new response arrives while paused"
+    assert len(app.speech_queue) == 1
+    assert app.speech_queue[0].text == "First response after user paused prior audio"
+    assert len(app.output_history) == 1
+    assert app.history_cursor == 0
+
+
+def test_output_history_multi_step_back_navigation(monkeypatch):
+    """Verify multi-step back navigation (1, 2, 3+ outputs) through output_history ring buffer."""
+    import collections
+    import threading
+    import desktop.app as app_module
+    from desktop.app import SpeechQueueItem
+
+    class DummyApp:
+        def __init__(self):
+            self.last_spoken_summary = ""
+            self.auto_read = True
+            self.output_history = []
+            self.history_cursor = -1
+            self.speech_queue = collections.deque()
+            self._speak_lock = threading.Lock()
+            self._speech_worker_event = threading.Event()
+            self.hud_enabled = True
+            self.hud_statuses = []
+            self.hud = type("DummyHud", (), {
+                "set_status": lambda s, st, state="": s.hud_statuses.append((st, state)),
+                "show": lambda s, state="", status="": s.hud_statuses.append((status, state)),
+                "hud_statuses": []
+            })()
+            self.current_speech_item = None
+
+    app = DummyApp()
+    stopped = []
+    chimes = []
+    monkeypatch.setattr(app_module, "is_paused", lambda: False)
+    monkeypatch.setattr(app_module, "is_speaking", lambda: False)
+    monkeypatch.setattr(app_module, "stop_speech", lambda: stopped.append(True))
+    monkeypatch.setattr(app_module, "play_chime", lambda rising=False: chimes.append(rising))
+    monkeypatch.setattr(SpeechQueueItem, "_extract_chat_tag", lambda self, fp: os.path.basename(os.path.dirname(fp)) if fp else "")
+
+    # Feed 4 distinct responses
+    for i in range(1, 5):
+        app_module.AntiTrayApp._on_assistant_response(
+            app, f"Response {i}", filepath=f"C:\\chat_{i}\\log.jsonl", step_index=i
+        )
+
+    assert len(app.output_history) == 4
+    assert app.history_cursor == 3
+    # Clear speech queue so we can observe go_back_output actions
+    app.speech_queue.clear()
+
+    # Step back 1 time -> should queue Response 3
+    app_module.AntiTrayApp.go_back_output(app)
+    assert app.history_cursor == 2
+    assert len(app.speech_queue) == 1
+    assert app.speech_queue[0].text == "Response 3"
+    assert app.speech_queue[0].chat_tag == "chat_3"
+
+    # Step back 2 times -> should queue Response 2
+    app_module.AntiTrayApp.go_back_output(app)
+    assert app.history_cursor == 1
+    assert len(app.speech_queue) == 2
+    assert app.speech_queue[0].text == "Response 2"
+    assert app.speech_queue[0].chat_tag == "chat_2"
+
+    # Step back 3 times -> should queue Response 1
+    app_module.AntiTrayApp.go_back_output(app)
+    assert app.history_cursor == 0
+    assert len(app.speech_queue) == 3
+    assert app.speech_queue[0].text == "Response 1"
+    assert app.speech_queue[0].chat_tag == "chat_1"
+
+    # Step back again past oldest output -> clamps at 0 without error
+    app_module.AntiTrayApp.go_back_output(app)
+    assert app.history_cursor == 0
+    assert app.speech_queue[0].text == "Response 1"
+
+    # Verify ring buffer maximum capacity of 20
+    for i in range(10, 35):
+        app_module.AntiTrayApp._on_assistant_response(
+            app, f"Response {i}", filepath="chat\\log.jsonl", step_index=i
+        )
+    assert len(app.output_history) == 20
+
 
 
 
