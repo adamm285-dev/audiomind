@@ -216,18 +216,37 @@ def capture_highlighted_text(target_hwnd: Optional[int] = None) -> Optional[str]
         return None
 
     user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
 
-    # If target window provided and still valid, bring it to foreground
+    # If target window provided and still valid, reliably restore foreground focus
     if target_hwnd:
         try:
             hwnd_val = getattr(target_hwnd, "value", target_hwnd)
             if user32.IsWindow(hwnd_val):
-                user32.SetForegroundWindow(hwnd_val)
-                time.sleep(0.08)
+                # Standard Win32 foreground lock bypass:
+                # 1. Tap Alt key to unlock Windows foreground lock
+                VK_MENU = 0x12
+                KEYEVENTF_KEYUP = 0x0002
+                user32.keybd_event(VK_MENU, 0, 0, 0)
+                user32.keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)
+
+                # 2. Attach thread input if different threads
+                fore_hwnd = user32.GetForegroundWindow()
+                fore_tid = user32.GetWindowThreadProcessId(fore_hwnd, None)
+                cur_tid = kernel32.GetCurrentThreadId()
+                if fore_tid and fore_tid != cur_tid:
+                    user32.AttachThreadInput(cur_tid, fore_tid, True)
+                    user32.BringWindowToTop(hwnd_val)
+                    user32.SetForegroundWindow(hwnd_val)
+                    user32.AttachThreadInput(cur_tid, fore_tid, False)
+                else:
+                    user32.BringWindowToTop(hwnd_val)
+                    user32.SetForegroundWindow(hwnd_val)
+                time.sleep(0.10)
         except Exception:
             pass
 
-    # Save prior clipboard content to restore later or use as fallback
+    # Save prior clipboard content to restore later if no new text was copied
     prior_clip = ""
     try:
         prior_clip = pyperclip.paste()
@@ -247,14 +266,14 @@ def capture_highlighted_text(target_hwnd: Optional[int] = None) -> Optional[str]
 
     user32.keybd_event(VK_CONTROL, 0, 0, 0)
     user32.keybd_event(VK_C, 0, 0, 0)
-    time.sleep(0.03)
+    time.sleep(0.04)
     user32.keybd_event(VK_C, 0, KEYEVENTF_KEYUP, 0)
     user32.keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0)
 
     new_clip = None
     # Poll briefly for target app to process WM_COPY
-    for _ in range(6):
-        time.sleep(0.03)
+    for _ in range(8):
+        time.sleep(0.04)
         try:
             curr = pyperclip.paste()
             if curr and curr != sentinel:
@@ -266,13 +285,12 @@ def capture_highlighted_text(target_hwnd: Optional[int] = None) -> Optional[str]
     if new_clip and new_clip != sentinel and new_clip.strip():
         return clean_markdown_for_speech(new_clip.strip())
 
-    # Fallback: if copy did not alter clipboard but prior clipboard has text
-    if prior_clip and prior_clip != sentinel and prior_clip.strip():
+    # If no new text was copied (no selection), restore prior clipboard and do NOT read stale data
+    if prior_clip and prior_clip != sentinel:
         try:
             pyperclip.copy(prior_clip)
         except Exception:
             pass
-        return clean_markdown_for_speech(prior_clip.strip())
 
     return None
 

@@ -922,7 +922,15 @@ class AntiTrayApp:
                         buf = ctypes.create_unicode_buffer(128)
                         user32.GetClassNameW(fg, buf, 128)
                         cls_name = buf.value
-                        if cls_name not in ("Shell_TrayWnd", "NotifyIconOverflowWindow", "TkTopLevel"):
+                        if cls_name not in (
+                            "Shell_TrayWnd",
+                            "Shell_SecondaryTrayWnd",
+                            "NotifyIconOverflowWindow",
+                            "TopLevelWindowForOverflowXamlIsland",
+                            "Windows.UI.Core.CoreWindow",
+                            "#32768",
+                            "TkTopLevel",
+                        ):
                             self.last_app_hwnd = fg
 
                 state = self.current_state

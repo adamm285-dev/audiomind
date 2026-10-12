@@ -359,6 +359,26 @@ def test_capture_highlighted_text_fallback(monkeypatch):
     assert "Sample Highlighted Markdown" in res
     assert "Here is selected text" in res
 
+def test_capture_highlighted_text_no_selection_returns_none(monkeypatch):
+    """Verify capture_highlighted_text returns None and restores prior clipboard when no text is selected."""
+    from desktop.audio.read_aloud import capture_highlighted_text
+    import pyperclip
+
+    # Prior clipboard had stale text, copy simulation fails to change sentinel
+    clipboard_state = {"content": "stale_old_slide_text"}
+    def fake_paste():
+        return clipboard_state["content"]
+    def fake_copy(t):
+        clipboard_state["content"] = t
+
+    monkeypatch.setattr(pyperclip, "paste", fake_paste)
+    monkeypatch.setattr(pyperclip, "copy", fake_copy)
+
+    # When no new text is selected, capture_highlighted_text returns None and restores prior clipboard
+    res = capture_highlighted_text(target_hwnd=None)
+    assert res is None
+    assert clipboard_state["content"] == "stale_old_slide_text"
+
 def test_tts_sapi_fallback_when_edge_tts_fails(monkeypatch):
     """Verify that speak_async automatically fails over to local Windows SAPI when Edge-TTS fails."""
     import asyncio
