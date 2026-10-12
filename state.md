@@ -3,13 +3,13 @@
 <!-- Read on Turn 1 boot. Strictly pruned after milestone completion. -->
 
 ## Current Objective
-- Brainstorm new repository name and prepare fresh public open-source repository release.
+- Offline SAPI Speech Fallback & Preparing State Freeze Resolution.
 
 ## Status & Gate Verification
-- [x] Chapter Skip Fix: Single-chapter and multi-chapter navigation preserves playback without aborting.
-- [x] Universal Highlight Reader: Cross-app selection reading active via tray menu, Ctrl+Alt+R, and voice.
-- [x] Security & Hardening: 8/8 adversarial audit items remediated; fail-closed gates active.
-- [x] Verification: Desktop (37/37 passed), Relay (7/7 passed), Android (28/28 verified). Commit `1142864`.
+- [x] Edge-TTS 403 Circuit Breaker: Rapidly trips on HTTP/WS 403 to prevent thread timeouts.
+- [x] Local Offline SAPI Fallback: Windows SAPI.SpVoice (48kHz stereo float32 PCM) active for multi-chapter and single-pass speech.
+- [x] HUD & Tray Freeze Remediation: Concurrency lock (_speak_lock), stop_speech() on new response, and explicit paused/stopped state cleanup in app worker.
+- [x] Full Verification: Desktop (38/38 passed), Relay (7/7 passed), Android (28/28 verified). Clean git tree.
 
 ## Immediate Next Action (Post-Compact)
-- Present candidate repo names to user and guide creation of fresh repository on GitHub.
+- Inform user of root cause, verified fixes, and provide instructions to start AudioMind.
