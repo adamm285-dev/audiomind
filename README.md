@@ -8,11 +8,19 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Podcast: Deep Dive](https://img.shields.io/badge/Podcast-Deep_Dive_(7m)-8A2BE2?logo=googlepodcasts)](docs/PODCAST_TRANSCRIPT.md)
 
+<p align="center">
+  <img src="media/slides/slide_01.png" alt="AudioMind: The Ambient Voice Cockpit" width="100%">
+</p>
+
 ---
 
 ## The Story
 
 When doing heavy daily engineering with Google Antigravity, output from complex coding sessions was often manually copied into system read-aloud utilities just to listen to refactors, test traces, and architectural explanations hands-free.
+
+<p align="center">
+  <img src="media/slides/slide_03.png" alt="The Vicious Cycle of the Copy-Paste Hack" width="850">
+</p>
 
 That friction sparked a builder question: **what if Antigravity had a native ambient voice companion?**
 
@@ -22,12 +30,16 @@ We built a lightweight Windows taskbar harness that sits in the system tray, ani
 
 ...and desktop Antigravity would focus, execute, acknowledge via cloud relay, and speak back the complete summary to the phone.
 
+<p align="center">
+  <img src="media/slides/slide_05.png" alt="The Anti-Distraction Engine: Zero-Latency Auto-Play" width="850">
+</p>
+
 This repository is that complete, end-to-end full-stack voice companion system.
 
-### 🎙️ Listen to the 7-Minute Deep Dive Explainer
-Hear the AI hosts break down why AudioMind was built—from the dreaded "15-minute idle tax" and 1998 robotic microwave voice hacks to the CD-player HUD and zero-trust AST firewall:
-- 🎧 **Audio Episode**: [`docs/media/audiomind_deep_dive_podcast.m4a`](docs/media/audiomind_deep_dive_podcast.m4a)
-- 📝 **Full Timecoded Transcript & Show Notes**: [`docs/PODCAST_TRANSCRIPT.md`](docs/PODCAST_TRANSCRIPT.md)
+### 🎙️ Deep Dive Explainer Podcast & Presentation
+- 🎧 **Audio Episode (7m)**: [`docs/media/audiomind_deep_dive_podcast.m4a`](docs/media/audiomind_deep_dive_podcast.m4a)
+- 📝 **Timecoded Transcript & Notes**: [`docs/PODCAST_TRANSCRIPT.md`](docs/PODCAST_TRANSCRIPT.md)
+- 📑 **Visual Presentation Deck**: [`media/AudioMind_Voice_Cockpit.pdf`](media/AudioMind_Voice_Cockpit.pdf)
 - 📖 **Project Wiki**: [`wiki/Home.md`](wiki/Home.md)
 
 ---
@@ -75,11 +87,21 @@ Hear the AI hosts break down why AudioMind was built—from the dreaded "15-minu
   <img src="media/audiomindhudpic.PNG" alt="AudioMind CD-Player Waveform HUD" width="500">
 </p>
 
+<p align="center">
+  <img src="media/slides/slide_06.png" alt="Code as an Audio Album: CD Player Transport & Chapters" width="850">
+</p>
+
 * **Read Highlighted Text Anywhere**: Select any text on your screen across any application (Antigravity IDE, browser, PDF reader, Slack, Word, terminal, etc.) and click **"📖 Read Highlighted Text"** in the tray menu, press global hotkey **`Ctrl+Alt+R`**, or say *"Hey Anti, read this"* / *"read highlighted text"*. Anti captures the selection, animates the waveform HUD, and reads it aloud with chapter seeking, pause/resume, and 5s rewind/forward controls.
 * **Audio Playback Navigation**: Granular speech navigation available directly in the system tray menu (`⏩ Forward 5s`, `⏪ Rewind 5s`, `⏭ Skip Chapter`, `⏮ Repeat Chapter`, `⏸ Pause/Resume`, `⏹ Stop`) and via hands-free voice commands (*"pause"*, *"resume"*, *"stop"*, *"rewind"*, *"skip chapter"*, *"repeat chapter"*). Automatically extracts structured chapters from markdown headings, numbered lists, paragraphs, or sentence clusters for seamless seeking. Evaluated only when speech is active with whole-phrase matching to eliminate voice intent collisions.
 * **Safe Focus & UIPI Protection**: Focuses Antigravity chat directly via `Ctrl+L` and double-checks foreground window focus before typing. Queries Win32 `TokenElevation` to prevent synthetic typing when Antigravity IDE runs with elevated privileges, speaking an audible explanation.
 * **Transcript Watcher**: Streams active conversation updates from `<appDataDir>\brain\<conversation-id>\.system_generated\logs\transcript.jsonl` with unabridged hydration up to 1,200 words.
 * **Win32 Window Focus**: Safely bypasses Windows foreground lock restrictions (`LockSetForegroundWindow` / `AttachThreadInput`) to bring Antigravity into focus when a voice command arrives.
+* **Hardware-Level Acoustic Echo Cancellation (WASAPI AEC)**: Directly subtracts the desktop speaker output from the microphone stream in real time, allowing hands-free wake-word interruption without wearing headphones.
+
+<p align="center">
+  <img src="media/slides/slide_08.png" alt="Hardware-Level Acoustic Echo Cancellation" width="850">
+</p>
+
 * **AST Command Firewall**: Validates and isolates incoming commands before injection, strictly guarding against destructive operations and out-of-boundary paths.
 * **Custom Wake-Word**: Bundled `hey_anti.onnx` model calibrated for hands-free desktop voice activation.
 
@@ -88,6 +110,10 @@ Hear the AI hosts break down why AudioMind was built—from the dreaded "15-minu
 * **Hands-Free Google Assistant**: Registered App Actions (`shortcuts.xml`) and system intents (`VOICE_COMMAND`, `SEARCH_ACTION`, `SEND`) allowing voice triggers like *"Hey Google, open Antigravity"*. All external intents are staged for explicit user confirmation before dispatch.
 * **Neural Speech Engine**: Integrates Google TTS with automatic pitch & rate inheritance from Android OS Settings (1.14x default), supporting full 3-state pause/resume playback (`⏸ Pause Voice` $\rightarrow$ `▶ Resume Voice` $\rightarrow$ `🔊 Replay Voice`).
 * **Configurable Relay Endpoint**: Connects to your local or hosted Cloud Relay service with bearer token authentication stored securely in `EncryptedSharedPreferences`.
+
+<p align="center">
+  <img src="media/slides/slide_11.png" alt="Unbound by the Desk: Android Companion & Cloud Relay" width="850">
+</p>
 
 ### 3. Cloud Relay Broker (`relay/`)
 * **Lightweight & High-Throughput**: Built with FastAPI and SQLAlchemy (SQLite by default; PostgreSQL ready). Sub-10ms response times for dispatch and polling.
@@ -207,6 +233,11 @@ Before running AudioMind, please review the following data flows and network dep
 5. **Firewall Boundary Disclaimer**: The AST Command Firewall (`desktop/firewall/`) is an advisory guard against accidental commands and malformed instructions, **not** an impregnable security boundary against adversarial prompt injection. The Antigravity IDE agent's own native permission and execution approval settings remain the ultimate security boundary.
 
 ### Security Guarantees & Defenses
+
+<p align="center">
+  <img src="media/slides/slide_09.png" alt="The Zero-Trust AST Command Firewall" width="850">
+</p>
+
 * **Fail-Closed Authentication**: The Cloud Relay rejects unauthenticated requests with HTTP 401 using constant-time `hmac.compare_digest`. The server refuses to start if `RELAY_AUTH_SECRET` is unset or shorter than 32 characters.
 * **Tenant Isolation**: Dispatches are strictly isolated by tenant ID derived exclusively from verified credentials; client-controlled tenant headers are discarded.
 * **No Remote Auto-Execution**: Remote instructions received over the relay are screened by the firewall, capped in length, stripped of control characters, and pasted into the IDE chat for manual confirmation. Remote instructions are **never** auto-submitted without human review.

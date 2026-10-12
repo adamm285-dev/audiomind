@@ -115,7 +115,25 @@
 - `audiomind_deep_dive_podcast.m4a`
 
 ### `media/`
+- `AudioMind_Voice_Cockpit.pdf`
 - `audiomindhudpic.PNG`
+
+### `media/slides/`
+- `slide_01.png`
+- `slide_02.png`
+- `slide_03.png`
+- `slide_04.png`
+- `slide_05.png`
+- `slide_06.png`
+- `slide_07.png`
+- `slide_08.png`
+- `slide_09.png`
+- `slide_10.png`
+- `slide_11.png`
+- `slide_12.png`
+- `slide_13.png`
+- `slide_14.png`
+- `slide_15.png`
 
 ### `prompts/`
 - `grillme.md`
