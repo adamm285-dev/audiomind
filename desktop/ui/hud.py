@@ -74,6 +74,17 @@ class WaveformHud:
         self.on_click = None
         self.on_right_click = None
         self.on_double_click = None
+        self.on_prev_chapter = None
+        self.on_rewind_5 = None
+        self.on_play_pause = None
+        self.on_forward_5 = None
+        self.on_next_chapter = None
+        self.on_skip_output = None
+        self.is_hovered = False
+        self.hovered_button = None
+        self._hover_hint = None
+        self.width = 330
+        self.height = 34
         self._thread = None
         self._lock = threading.Lock()
 
@@ -96,8 +107,8 @@ class WaveformHud:
         self.root.attributes("-topmost", True)
         self.root.attributes("-alpha", 0.0)  # Start hidden
 
-        # Micro-capsule dimensions (widened to 290px for chat tags and queue counters)
-        self.width = 290
+        # Expandable dimensions (330px width; 34px compact pill, 60px expanded CD player)
+        self.width = 330
         self.height = 34
 
         # Configure transparent-capable canvas
@@ -115,6 +126,12 @@ class WaveformHud:
         self.root.bind("<Button-3>", self._on_canvas_right_click)
         self.canvas.bind("<Double-Button-1>", self._on_canvas_double_click)
         self.root.bind("<Double-Button-1>", self._on_canvas_double_click)
+        self.canvas.bind("<Enter>", self._on_mouse_enter)
+        self.root.bind("<Enter>", self._on_mouse_enter)
+        self.canvas.bind("<Leave>", self._on_mouse_leave)
+        self.root.bind("<Leave>", self._on_mouse_leave)
+        self.canvas.bind("<Motion>", self._on_mouse_move)
+        self.root.bind("<Motion>", self._on_mouse_move)
 
         self._update_geometry()
 
@@ -122,8 +139,86 @@ class WaveformHud:
         self._animate()
         self.root.mainloop()
 
+    def _hit_test_button(self, x, y):
+        """Hit-test (x, y) coordinates against Row 2 CD-player transport buttons."""
+        if self.height < 50:
+            return None
+        if not (33 <= y <= 56):
+            return None
+        btn_w = 46
+        spacing = 6
+        start_x = 12
+        btn_ids = ["prev", "rewind", "play_pause", "forward", "next", "skip"]
+        for i, btn_id in enumerate(btn_ids):
+            bx1 = start_x + i * (btn_w + spacing)
+            bx2 = bx1 + btn_w
+            if bx1 <= x <= bx2:
+                return btn_id
+        return None
+
     def _on_canvas_click(self, event=None):
-        """Invoke on_click callback (e.g. toggle speech pause) when user clicks floating HUD."""
+        """Invoke button transport callback or general on_click (play/pause toggle)."""
+        if event and self.height >= 50:
+            btn = self._hit_test_button(event.x, event.y)
+            if btn == "prev":
+                if self.on_prev_chapter:
+                    try:
+                        self.on_prev_chapter()
+                    except Exception:
+                        pass
+                elif self.on_click:
+                    try:
+                        self.on_click()
+                    except Exception:
+                        pass
+                return "break"
+            elif btn == "rewind":
+                if self.on_rewind_5:
+                    try:
+                        self.on_rewind_5()
+                    except Exception:
+                        pass
+                return "break"
+            elif btn == "play_pause":
+                if self.on_play_pause:
+                    try:
+                        self.on_play_pause()
+                    except Exception:
+                        pass
+                elif self.on_click:
+                    try:
+                        self.on_click()
+                    except Exception:
+                        pass
+                return "break"
+            elif btn == "forward":
+                if self.on_forward_5:
+                    try:
+                        self.on_forward_5()
+                    except Exception:
+                        pass
+                return "break"
+            elif btn == "next":
+                if self.on_next_chapter:
+                    try:
+                        self.on_next_chapter()
+                    except Exception:
+                        pass
+                return "break"
+            elif btn == "skip":
+                if self.on_skip_output:
+                    try:
+                        self.on_skip_output()
+                    except Exception:
+                        pass
+                elif self.on_double_click:
+                    try:
+                        self.on_double_click()
+                    except Exception:
+                        pass
+                return "break"
+
+        # General click on top row / background or compact mode
         if self.on_click:
             try:
                 self.on_click()
@@ -153,6 +248,48 @@ class WaveformHud:
             except Exception:
                 pass
         return "break"
+
+    def _on_mouse_enter(self, event=None):
+        self.is_hovered = True
+        self._check_expansion()
+
+    def _on_mouse_leave(self, event=None):
+        self.is_hovered = False
+        self.hovered_button = None
+        self._hover_hint = None
+        self._check_expansion()
+
+    def _on_mouse_move(self, event=None):
+        if not event or self.height < 50:
+            return
+        btn = self._hit_test_button(event.x, event.y)
+        if btn != self.hovered_button:
+            self.hovered_button = btn
+            if btn:
+                hints = {
+                    "prev": "⏮ Repeat Chapter",
+                    "rewind": "⏪ Rewind 5s",
+                    "play_pause": "▶ Resume Speech" if self.state == "paused" else "⏸ Pause Speech",
+                    "forward": "⏩ Forward 5s",
+                    "next": "⏭ Next Chapter",
+                    "skip": "⏹ Skip to Next Output",
+                }
+                self._hover_hint = hints.get(btn)
+            else:
+                self._hover_hint = None
+
+    def _check_expansion(self):
+        """Expand height to 60px when speaking/paused or hovered, collapse to 34px otherwise."""
+        should_expand = self.is_hovered or (self.state in ("speaking", "paused"))
+        target_h = 60 if should_expand else 34
+        if self.height != target_h:
+            self.height = target_h
+            if self.canvas:
+                try:
+                    self.canvas.config(height=self.height)
+                except Exception:
+                    pass
+            self._update_geometry()
 
     def _update_geometry(self):
         if not self.root:
@@ -243,9 +380,25 @@ class WaveformHud:
         if should_bring_front and self.root:
             self.root.after(0, self._bring_to_front)
 
+    def _draw_rounded_rect(self, x1, y1, x2, y2, r, fill, outline, width=1):
+        """Draw a smooth rounded rectangle with corner radius r."""
+        self.canvas.create_arc(x1, y1, x1 + 2 * r, y1 + 2 * r, start=90, extent=90, fill=fill, outline=outline, width=width)
+        self.canvas.create_arc(x2 - 2 * r, y1, x2, y1 + 2 * r, start=0, extent=90, fill=fill, outline=outline, width=width)
+        self.canvas.create_arc(x2 - 2 * r, y2 - 2 * r, x2, y2, start=270, extent=90, fill=fill, outline=outline, width=width)
+        self.canvas.create_arc(x1, y2 - 2 * r, x1 + 2 * r, y2, start=180, extent=90, fill=fill, outline=outline, width=width)
+        self.canvas.create_rectangle(x1 + r, y1, x2 - r, y2, fill=fill, outline="")
+        self.canvas.create_rectangle(x1, y1 + r, x2, y2 - r, fill=fill, outline="")
+        if outline:
+            self.canvas.create_line(x1 + r, y1, x2 - r, y1, fill=outline, width=width)
+            self.canvas.create_line(x1 + r, y2, x2 - r, y2, fill=outline, width=width)
+            self.canvas.create_line(x1, y1 + r, x1, y2 - r, fill=outline, width=width)
+            self.canvas.create_line(x2, y1 + r, x2, y2 - r, fill=outline, width=width)
+
     def _animate(self):
         if not self.is_running or not self.root:
             return
+
+        self._check_expansion()
 
         # Smooth alpha fade transition
         curr_alpha = float(self.root.attributes("-alpha"))
@@ -316,32 +469,34 @@ class WaveformHud:
 
         bg = "#0c0e14"
 
-        # 1. Sleek Capsule Pill Background
-        self.canvas.create_arc(1, 1, h - 1, h - 1, start=90, extent=180, fill=bg, outline=glow_color, width=1)
-        self.canvas.create_arc(w - (h - 1), 1, w - 1, h - 1, start=270, extent=180, fill=bg, outline=glow_color, width=1)
-        self.canvas.create_rectangle(h // 2, 1, w - (h // 2), h - 1, fill=bg, outline="")
-        self.canvas.create_line(h // 2, 1, w - (h // 2), 1, fill=glow_color, width=1)
-        self.canvas.create_line(h // 2, h - 1, w - (h // 2), h - 1, fill=glow_color, width=1)
+        # 1. Sleek Capsule Pill / Rounded Card Background
+        r = 14 if h >= 50 else (h // 2)
+        self._draw_rounded_rect(1, 1, w - 1, h - 1, r, fill=bg, outline=glow_color, width=1)
 
         # 2. Glowing Indicator Dot (Left side)
-        dot_y = h / 2
+        dot_y = 16 if h >= 50 else (h / 2)
         dot_x = 13
         dot_r = 3.2
         self.canvas.create_oval(dot_x - dot_r, dot_y - dot_r, dot_x + dot_r, dot_y + dot_r, fill=dot_color, outline="")
 
         # 3. Text Label (Streamlined, no redundant 'AudioMind •' prefix, fits chat tags + queue count)
-        display_label = self.status_text
-        for prefix in ("AudioMind • ", "AudioMind: ", "Anti • ", "Anti: "):
-            if display_label.startswith(prefix):
-                display_label = display_label[len(prefix):].strip()
+        if self._hover_hint:
+            display_label = self._hover_hint
+            txt_fill = glow_color
+        else:
+            display_label = self.status_text
+            for prefix in ("AudioMind • ", "AudioMind: ", "Anti • ", "Anti: "):
+                if display_label.startswith(prefix):
+                    display_label = display_label[len(prefix):].strip()
 
-        if display_label in ("AudioMind", "AudioMind is online", "Anti", "Anti is online", ""):
-            display_label = default_status
+            if display_label in ("AudioMind", "AudioMind is online", "Anti", "Anti is online", ""):
+                display_label = default_status
 
-        if len(display_label) > 32:
-            display_label = display_label[:31] + "…"
+            if len(display_label) > 36:
+                display_label = display_label[:35] + "…"
+            txt_fill = "#e6edf3"
 
-        self.canvas.create_text(22, dot_y, text=display_label, fill="#e6edf3", font=("Segoe UI", 9, "bold"), anchor="w")
+        self.canvas.create_text(22, dot_y, text=display_label, fill=txt_fill, font=("Segoe UI", 9, "bold"), anchor="w")
 
         # 4. Right side indicator
         if self.state in ("processing", "thinking"):
@@ -400,6 +555,45 @@ class WaveformHud:
                 t = i / num_bars
                 bar_color = bar_color1 if t < 0.5 else bar_color2
                 self.canvas.create_line(bx, by1, bx, by2, fill=bar_color, width=bar_w, capstyle="round")
+
+        # 5. Row 2 CD-Player Transport Controls (when expanded h >= 50)
+        if h >= 50:
+            # Thin divider line separating status row from controls
+            self.canvas.create_line(14, 31, w - 14, 31, fill="#21262d", width=1)
+
+            btn_defs = [
+                ("prev", "⏮"),
+                ("rewind", "⏪ 5s"),
+                ("play_pause", "▶" if self.state == "paused" else "⏸"),
+                ("forward", "⏩ 5s"),
+                ("next", "⏭"),
+                ("skip", "⏹"),
+            ]
+
+            start_x = 12
+            btn_w = 46
+            spacing = 6
+            y1 = 34
+            y2 = 55
+            cy = 44.5
+
+            for i, (btn_id, icon) in enumerate(btn_defs):
+                bx1 = start_x + i * (btn_w + spacing)
+                bx2 = bx1 + btn_w
+                is_btn_hover = (self.hovered_button == btn_id)
+
+                if is_btn_hover:
+                    btn_fill = "#21262d"
+                    btn_border = glow_color
+                    txt_fill = glow_color
+                else:
+                    btn_fill = "#161b22"
+                    btn_border = "#30363d"
+                    txt_fill = "#e6edf3"
+
+                self._draw_rounded_rect(bx1, y1, bx2, y2, 4, fill=btn_fill, outline=btn_border, width=1)
+                font_spec = ("Segoe UI", 8, "bold") if "5s" in icon else ("Segoe UI", 9)
+                self.canvas.create_text((bx1 + bx2) / 2, cy, text=icon, fill=txt_fill, font=font_spec)
 
     def destroy(self):
         self.is_running = False

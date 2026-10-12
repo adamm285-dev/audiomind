@@ -661,6 +661,180 @@ def test_voice_profiles_and_switching():
     assert get_default_voice() == "af_heart"
 
 
+def test_waveform_hud_cd_player_transport_controls():
+    """Verify CD-player transport controls hit-testing, individual button callbacks, and expansion states."""
+    from desktop.ui.hud import WaveformHud
+
+    hud = WaveformHud(position="bottom_right")
+    assert hud.height == 34
+    assert hud.width == 330
+
+    # 1. Verify expansion logic
+    hud.state = "idle"
+    hud.is_hovered = False
+    hud._check_expansion()
+    assert hud.height == 34
+
+    hud.state = "speaking"
+    hud._check_expansion()
+    assert hud.height == 60
+
+    hud.state = "paused"
+    hud._check_expansion()
+    assert hud.height == 60
+
+    hud.state = "listening"
+    hud.is_hovered = True
+    hud._check_expansion()
+    assert hud.height == 60
+
+    hud.is_hovered = False
+    hud._check_expansion()
+    assert hud.height == 34
+
+    # 2. Test button hit testing when expanded (height = 60)
+    hud.height = 60
+    assert hud._hit_test_button(35, 44) == "prev"
+    assert hud._hit_test_button(87, 44) == "rewind"
+    assert hud._hit_test_button(139, 44) == "play_pause"
+    assert hud._hit_test_button(191, 44) == "forward"
+    assert hud._hit_test_button(243, 44) == "next"
+    assert hud._hit_test_button(295, 44) == "skip"
+    # Row 1 or outside bounds returns None
+    assert hud._hit_test_button(50, 16) is None
+    assert hud._hit_test_button(35, 20) is None
+
+    # In compact mode (height = 34), hit testing always returns None
+    hud.height = 34
+    assert hud._hit_test_button(35, 44) is None
+
+    # 3. Test transport button callbacks
+    hud.height = 60
+    events = []
+    hud.on_prev_chapter = lambda: events.append("prev")
+    hud.on_rewind_5 = lambda: events.append("rewind")
+    hud.on_play_pause = lambda: events.append("play_pause")
+    hud.on_forward_5 = lambda: events.append("forward")
+    hud.on_next_chapter = lambda: events.append("next")
+    hud.on_skip_output = lambda: events.append("skip")
+    hud.on_click = lambda: events.append("general_click")
+
+    class DummyEvent:
+        def __init__(self, x, y):
+            self.x = x
+            self.y = y
+
+    # Click each of the 6 buttons
+    hud._on_canvas_click(DummyEvent(35, 44))
+    hud._on_canvas_click(DummyEvent(87, 44))
+    hud._on_canvas_click(DummyEvent(139, 44))
+    hud._on_canvas_click(DummyEvent(191, 44))
+    hud._on_canvas_click(DummyEvent(243, 44))
+    hud._on_canvas_click(DummyEvent(295, 44))
+    assert events == ["prev", "rewind", "play_pause", "forward", "next", "skip"]
+
+    # Click outside buttons (row 1) triggers general on_click
+    events.clear()
+    hud._on_canvas_click(DummyEvent(50, 16))
+    assert events == ["general_click"]
+
+    # 4. Test hover hint tracking
+    hud._on_mouse_move(DummyEvent(35, 44))
+    assert hud.hovered_button == "prev"
+    assert hud._hover_hint == "⏮ Repeat Chapter"
+
+    hud._on_mouse_move(DummyEvent(87, 44))
+    assert hud.hovered_button == "rewind"
+    assert hud._hover_hint == "⏪ Rewind 5s"
+
+    hud._on_mouse_move(DummyEvent(139, 44))
+    assert hud.hovered_button == "play_pause"
+
+    hud._on_mouse_move(DummyEvent(295, 44))
+    assert hud.hovered_button == "skip"
+    assert hud._hover_hint == "⏹ Skip to Next Output"
+
+    hud._on_mouse_move(DummyEvent(50, 16))
+    assert hud.hovered_button is None
+    assert hud._hover_hint is None
+
+
+def test_tray_menu_settings_submenu(monkeypatch):
+    """Verify tray menu structure has a dedicated Settings submenu with all expected controls."""
+    import desktop.app as app_module
+
+    class DummyTrayApp:
+        def __init__(self):
+            self.auto_submit = True
+            self.auto_read = True
+            self.muted = False
+            self.speech_speed = 1.0
+            self.hud_enabled = True
+            self.remote_poll_enabled = False
+            self.speech_queue = []
+            self.last_spoken_summary = ""
+            self.hud = type("DummyHud", (), {"theme": "cyberpunk", "position": "bottom_right"})()
+            self.current_speech_item = None
+            self.running = True
+
+        def _get_tray_header_text(self, item=None):
+            return "🟢  AudioMind: Active & Listening"
+        def show_status_toast(self, icon=None, item=None): pass
+        def toggle_auto_submit(self, icon=None, item=None): pass
+        def toggle_auto_read(self, icon=None, item=None): pass
+        def toggle_speech_pause(self, icon=None, item=None): pass
+        def forward_speech_5(self, icon=None, item=None): pass
+        def rewind_speech_5(self, icon=None, item=None): pass
+        def skip_next_chapter(self, icon=None, item=None): pass
+        def skip_current_output(self, icon=None, item=None): pass
+        def repeat_chapter(self, icon=None, item=None): pass
+        def interrupt_speech(self, icon=None, item=None): pass
+        def replay_last_response(self, icon=None, item=None): pass
+        def read_highlighted_text(self, icon=None, item=None): pass
+        def set_voice_model(self, v_id, v_name): pass
+        def set_hud_theme(self, theme): pass
+        def set_speech_speed(self, speed): pass
+        def toggle_mute(self, icon=None, item=None): pass
+        def toggle_hud(self, icon=None, item=None): pass
+        def toggle_hud_dock(self, icon=None, item=None): pass
+        def toggle_remote_listener(self, icon=None, item=None): pass
+        def test_greeting(self, icon=None, item=None): pass
+        def open_firewall_audit(self, icon=None, item=None): pass
+        def exit_app(self, icon=None, item=None): pass
+
+    app = DummyTrayApp()
+    app_module.AntiTrayApp._setup_tray(app)
+
+    assert app.tray_icon is not None
+    root_menu = app.tray_icon.menu
+
+    import pystray
+
+    # Verify root items
+    def get_text(it):
+        return it.text(it) if callable(it.text) else str(it.text)
+
+    root_texts = [get_text(item) for item in root_menu.items if item != pystray.Menu.SEPARATOR]
+    assert any("Settings" in t for t in root_texts), f"Settings submenu not found in root menu: {root_texts}"
+    assert any("Voice Selection" in t for t in root_texts)
+    assert any("Exit AudioMind" in t for t in root_texts)
+
+    # Find the Settings item
+    settings_item = next(item for item in root_menu.items if item != pystray.Menu.SEPARATOR and "Settings" in get_text(item))
+    assert settings_item.submenu is not None
+
+    # Inspect items inside Settings submenu
+    settings_texts = [get_text(sub) for sub in settings_item.submenu.items if sub != pystray.Menu.SEPARATOR]
+    assert any("HUD Color Theme" in t for t in settings_texts)
+    assert any("Speech Speed" in t for t in settings_texts)
+    assert any("Mute Microphone" in t for t in settings_texts)
+    assert any("Desktop Waveform HUD" in t for t in settings_texts)
+    assert any("Dock Waveform" in t for t in settings_texts)
+    assert any("Remote Assistant Dispatch Listener" in t for t in settings_texts)
+    assert any("Test Voice Greeting" in t for t in settings_texts)
+    assert any("Open Firewall State" in t for t in settings_texts)
+
+
 
 
 

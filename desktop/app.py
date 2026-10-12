@@ -694,14 +694,21 @@ class AntiTrayApp:
         self.remote_poll_enabled = bool(self.remote_api_url and token)
         self._speak_lock = threading.Lock()
 
-        # Initialize HUD in background thread with intuitive click controls:
+        # Initialize HUD in background thread with intuitive CD-player and click controls:
         # - Left-Click: Pause / Resume playback
         # - Right-Click: Skip to next chapter (or next output if on final chapter)
         # - Double-Click: Skip entire response immediately to next output
+        # - Transport Bar: [⏮] [⏪ 5s] [⏯] [⏩ 5s] [⏭] [⏹]
         self.hud = WaveformHud()
         self.hud.on_click = self.toggle_speech_pause
         self.hud.on_right_click = self.skip_next_chapter
         self.hud.on_double_click = self.skip_current_output
+        self.hud.on_prev_chapter = self.repeat_chapter
+        self.hud.on_rewind_5 = self.rewind_speech_5
+        self.hud.on_play_pause = self.toggle_speech_pause
+        self.hud.on_forward_5 = self.forward_speech_5
+        self.hud.on_next_chapter = self.skip_next_chapter
+        self.hud.on_skip_output = self.skip_current_output
         self.hud.start()
 
         # Security & STT
@@ -828,6 +835,29 @@ class AntiTrayApp:
         threading.Thread(target=_preview, daemon=True).start()
 
     def _setup_tray(self):
+        settings_menu = pystray.Menu(
+            item("🎨  HUD Color Theme", pystray.Menu(
+                item("Cyberpunk Neon (Default)", lambda: self.set_hud_theme("cyberpunk"), checked=lambda it: self.hud.theme == "cyberpunk"),
+                item("Emerald Matrix", lambda: self.set_hud_theme("matrix"), checked=lambda it: self.hud.theme == "matrix"),
+                item("Sunset Amber", lambda: self.set_hud_theme("sunset"), checked=lambda it: self.hud.theme == "sunset"),
+                item("Deep Space Violet", lambda: self.set_hud_theme("violet"), checked=lambda it: self.hud.theme == "violet"),
+                item("Ice White Stealth", lambda: self.set_hud_theme("ice"), checked=lambda it: self.hud.theme == "ice"),
+            )),
+            item("⚡  Speech Speed", pystray.Menu(
+                item("1.0x  Normal", lambda: self.set_speech_speed(1.0), checked=lambda it: self.speech_speed == 1.0),
+                item("1.15x Brisk", lambda: self.set_speech_speed(1.15), checked=lambda it: self.speech_speed == 1.15),
+                item("1.25x Fast", lambda: self.set_speech_speed(1.25), checked=lambda it: self.speech_speed == 1.25),
+                item("1.4x  Rapid", lambda: self.set_speech_speed(1.4), checked=lambda it: self.speech_speed == 1.4),
+            )),
+            item("🔇  Mute Microphone  (Ctrl+Alt+M)", self.toggle_mute, checked=lambda item: self.muted),
+            item("🌊  Desktop Waveform HUD", self.toggle_hud, checked=lambda item: self.hud_enabled),
+            item("📌  Dock Waveform to Bottom-Right", self.toggle_hud_dock, checked=lambda item: self.hud.position == "bottom_right"),
+            item("📱  Remote Assistant Dispatch Listener", self.toggle_remote_listener, checked=lambda item: self.remote_poll_enabled),
+            pystray.Menu.SEPARATOR,
+            item("👋  Test Voice Greeting", self.test_greeting),
+            item("🛡️  Open Firewall State", self.open_firewall_audit),
+        )
+
         menu = pystray.Menu(
             item(self._get_tray_header_text, self.show_status_toast, default=True),
             pystray.Menu.SEPARATOR,
@@ -861,26 +891,7 @@ class AntiTrayApp:
                 item("George • British Classic BBC", lambda: self.set_voice_model("bm_george", "George"), checked=lambda it: get_default_voice() == "bm_george"),
                 item("Fable • British Narrative", lambda: self.set_voice_model("bm_fable", "Fable"), checked=lambda it: get_default_voice() == "bm_fable"),
             )),
-            item("🎨  HUD Color Theme", pystray.Menu(
-                item("Cyberpunk Neon (Default)", lambda: self.set_hud_theme("cyberpunk"), checked=lambda it: self.hud.theme == "cyberpunk"),
-                item("Emerald Matrix", lambda: self.set_hud_theme("matrix"), checked=lambda it: self.hud.theme == "matrix"),
-                item("Sunset Amber", lambda: self.set_hud_theme("sunset"), checked=lambda it: self.hud.theme == "sunset"),
-                item("Deep Space Violet", lambda: self.set_hud_theme("violet"), checked=lambda it: self.hud.theme == "violet"),
-                item("Ice White Stealth", lambda: self.set_hud_theme("ice"), checked=lambda it: self.hud.theme == "ice"),
-            )),
-            item("⚡  Speech Speed", pystray.Menu(
-                item("1.0x  Normal", lambda: self.set_speech_speed(1.0), checked=lambda it: self.speech_speed == 1.0),
-                item("1.15x Brisk", lambda: self.set_speech_speed(1.15), checked=lambda it: self.speech_speed == 1.15),
-                item("1.25x Fast", lambda: self.set_speech_speed(1.25), checked=lambda it: self.speech_speed == 1.25),
-                item("1.4x  Rapid", lambda: self.set_speech_speed(1.4), checked=lambda it: self.speech_speed == 1.4),
-            )),
-            item("🔇  Mute Microphone  (Ctrl+Alt+M)", self.toggle_mute, checked=lambda item: self.muted),
-            item("🌊  Desktop Waveform HUD", self.toggle_hud, checked=lambda item: self.hud_enabled),
-            item("📌  Dock Waveform to Bottom-Right", self.toggle_hud_dock, checked=lambda item: self.hud.position == "bottom_right"),
-            item("📱  Remote Assistant Dispatch Listener", self.toggle_remote_listener, checked=lambda item: self.remote_poll_enabled),
-            pystray.Menu.SEPARATOR,
-            item("👋  Test Voice Greeting", self.test_greeting),
-            item("🛡️  Open Firewall State", self.open_firewall_audit),
+            item("⚙️  Settings", settings_menu),
             pystray.Menu.SEPARATOR,
             item("❌  Exit AudioMind", self.exit_app)
         )
