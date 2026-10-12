@@ -628,6 +628,7 @@ class AntiTrayApp:
         # Only enable if explicitly configured with a secure URL and an authentication secret
         token = get_desktop_session_token()
         self.remote_poll_enabled = bool(self.remote_api_url and token)
+        self._speak_lock = threading.Lock()
 
         # Initialize HUD in background thread
         self.hud = WaveformHud()
@@ -655,30 +656,30 @@ class AntiTrayApp:
         # Wire speech player state changes to tray and HUD
         def _on_player_state(st: str):
             if st == "paused":
-                self.set_tray_state("muted", "Anti: Speech Paused (Click to Resume)")
+                self.set_tray_state("paused", "AudioMind: Speech Paused (Click to Resume)")
                 if self.hud_enabled:
-                    self.hud.set_status("Anti • Paused", state="paused")
+                    self.hud.set_status("AudioMind • Paused", state="paused")
             elif st == "playing":
-                self.set_tray_state("anti_speaking", "Anti: Speaking...")
+                self.set_tray_state("anti_speaking", "AudioMind: Speaking...")
                 if self.hud_enabled:
-                    self.hud.show(state="speaking", status="Anti • Speaking")
+                    self.hud.show(state="speaking", status="AudioMind • Speaking")
             elif st == "rewound":
                 if self.hud_enabled:
-                    self.hud.set_status("Anti • Rewound 5s", state="speaking" if is_speaking() else "paused")
+                    self.hud.set_status("AudioMind • Rewound 5s", state="speaking" if is_speaking() else "paused")
             elif st == "forwarded":
                 if self.hud_enabled:
-                    self.hud.set_status("Anti • Forward 5s", state="speaking" if is_speaking() else "paused")
+                    self.hud.set_status("AudioMind • Forward 5s", state="speaking" if is_speaking() else "paused")
             elif st in ("chapter_skipped", "chapter_repeated"):
                 cur_ch, tot_ch, title = get_chapter_info()
                 if self.hud_enabled:
-                    self.hud.set_status(f"Anti • Ch {cur_ch}/{tot_ch}: {title[:20]}", state="speaking" if is_speaking() else "paused")
+                    self.hud.set_status(f"AudioMind • Ch {cur_ch}/{tot_ch}: {title[:20]}", state="speaking" if is_speaking() else "paused")
             elif st in ("stopped", "finished"):
                 if self.hud_enabled:
                     self.hud.hide()
                 if not self.muted:
-                    self.set_tray_state("listening", "Anti: Listening for 'Hey Anti'")
+                    self.set_tray_state("listening", "AudioMind: Listening for 'Hey Anti'")
                 else:
-                    self.set_tray_state("muted", "Anti: Microphone Muted")
+                    self.set_tray_state("muted", "AudioMind: Microphone Muted")
 
         get_speech_player().on_state_change = _on_player_state
 
@@ -771,30 +772,39 @@ class AntiTrayApp:
     def toggle_speech_pause(self, icon=None, item=None):
         paused = toggle_pause()
         print(f"[*] Speech Pause Toggled: now {'PAUSED' if paused else 'PLAYING'}")
+        if self.hud_enabled:
+            if paused:
+                self.hud.set_status("AudioMind • Paused", state="paused")
+            else:
+                self.hud.set_status("AudioMind • Speaking", state="speaking")
+        if paused:
+            self.set_tray_state("paused", "AudioMind: Speech Paused (Click to Resume)")
+        else:
+            self.set_tray_state("anti_speaking", "AudioMind: Speaking...")
 
     def forward_speech_5(self, icon=None, item=None):
         new_pos = fast_forward_speech(5.0)
         if self.hud_enabled:
-            self.hud.set_status("Anti • Forward 5s", state="speaking" if is_speaking() else "paused")
+            self.hud.set_status("AudioMind • Forward 5s", state="speaking" if is_speaking() else "paused")
         print(f"[*] Speech Forwarded 5s -> position: {new_pos:.1f}s")
 
     def rewind_speech_5(self, icon=None, item=None):
         new_pos = rewind_speech(5.0)
         if self.hud_enabled:
-            self.hud.set_status("Anti • Rewound 5s", state="speaking" if is_speaking() else "paused")
+            self.hud.set_status("AudioMind • Rewound 5s", state="speaking" if is_speaking() else "paused")
         print(f"[*] Speech Rewound 5s -> position: {new_pos:.1f}s")
 
     def rewind_speech_10(self, icon=None, item=None):
         new_pos = rewind_speech(10.0)
         if self.hud_enabled:
-            self.hud.set_status("Anti • Rewound 10s", state="speaking" if is_speaking() else "paused")
+            self.hud.set_status("AudioMind • Rewound 10s", state="speaking" if is_speaking() else "paused")
         print(f"[*] Speech Rewound 10s -> position: {new_pos:.1f}s")
 
     def skip_next_chapter(self, icon=None, item=None):
         new_ch = skip_to_next_chapter()
         cur_ch, tot_ch, title = get_chapter_info()
         if self.hud_enabled:
-            self.hud.set_status(f"Anti • Ch {cur_ch}/{tot_ch}: {title[:20]}", state="speaking" if is_speaking() else "paused")
+            self.hud.set_status(f"AudioMind • Ch {cur_ch}/{tot_ch}: {title[:20]}", state="speaking" if is_speaking() else "paused")
         print(f"[*] Skipped to Next Chapter -> Chapter {cur_ch}/{tot_ch} ({title})")
 
     def repeat_chapter(self, icon=None, item=None):
@@ -802,7 +812,7 @@ class AntiTrayApp:
             new_ch = repeat_last_chapter()
             cur_ch, tot_ch, title = get_chapter_info()
             if self.hud_enabled:
-                self.hud.set_status(f"Anti • Ch {cur_ch}/{tot_ch}: {title[:20]}", state="speaking" if is_speaking() else "paused")
+                self.hud.set_status(f"AudioMind • Ch {cur_ch}/{tot_ch}: {title[:20]}", state="speaking" if is_speaking() else "paused")
             print(f"[*] Repeated Chapter -> Chapter {cur_ch}/{tot_ch} ({title})")
         elif self.last_spoken_summary:
             self.replay_last_response()
@@ -812,7 +822,9 @@ class AntiTrayApp:
         if self.hud_enabled:
             self.hud.hide()
         if not self.muted:
-            self.set_tray_state("listening", "Anti: Listening for 'Hey Anti'")
+            self.set_tray_state("listening", "AudioMind: Listening for 'Hey Anti'")
+        else:
+            self.set_tray_state("muted", "AudioMind: Microphone Muted")
 
     def replay_last_response(self, icon=None, item=None):
         if self.last_spoken_summary:
@@ -823,25 +835,28 @@ class AntiTrayApp:
     def read_highlighted_text(self, icon=None, item=None):
         """
         Captures highlighted/selected text from the active application window
-        and reads it aloud using the Ava neural speech engine.
+        and reads it aloud using the Ava neural speech engine (or offline SAPI fallback).
         """
         try:
             from desktop.audio.read_aloud import capture_highlighted_text
         except ImportError:
-            from audio.read_aloud import capture_highlighted_text
+            try:
+                from audio.read_aloud import capture_highlighted_text
+            except ImportError:
+                capture_highlighted_text = lambda target_hwnd: None
 
         target_hwnd = getattr(self, "last_app_hwnd", None)
         text = capture_highlighted_text(target_hwnd)
         if text and text.strip():
             print(f"\n[📖 READ HIGHLIGHTED TEXT]: Captured {len(text.split())} words: \"{text[:60]}...\"")
             if self.hud_enabled:
-                self.hud.show(state="speaking", status="Anti • Reading Selection")
-            self.set_tray_state("anti_speaking", "Anti: Reading Selection...")
+                self.hud.show(state="speaking", status="AudioMind • Reading Selection")
+            self.set_tray_state("anti_speaking", "AudioMind: Reading Selection...")
 
             def _on_start():
                 if self.hud_enabled:
-                    self.hud.show(state="speaking", status="Anti • Reading Selection")
-                self.set_tray_state("anti_speaking", "Anti: Reading Selection...")
+                    self.hud.show(state="speaking", status="AudioMind • Reading Selection")
+                self.set_tray_state("anti_speaking", "AudioMind: Reading Selection...")
 
             def _on_lvl(lvl: float):
                 if self.hud_enabled and is_speaking():
@@ -853,25 +868,33 @@ class AntiTrayApp:
                 except Exception as e:
                     print(f"[!] Read highlighted text error: {e}")
                 finally:
-                    if not is_speech_active():
+                    if is_speaking():
+                        pass
+                    elif is_paused():
+                        if self.hud_enabled:
+                            self.hud.set_status("AudioMind • Paused", state="paused")
+                        self.set_tray_state("paused", "AudioMind: Speech Paused")
+                    else:
                         if self.hud_enabled:
                             self.hud.hide()
                         if not self.muted:
-                            self.set_tray_state("listening", "Anti: Listening for 'Hey Anti'")
+                            self.set_tray_state("listening", "AudioMind: Listening for 'Hey Anti'")
                         else:
-                            self.set_tray_state("muted", "Anti: Microphone Muted")
+                            self.set_tray_state("muted", "AudioMind: Microphone Muted")
 
             threading.Thread(target=_read_worker, daemon=True).start()
         else:
             print("[ℹ️ READ HIGHLIGHTED TEXT]: No text was highlighted on screen.")
             if self.hud_enabled:
-                self.hud.show(state="idle", status="Anti • No Selection")
+                self.hud.show(state="idle", status="AudioMind • No Selection")
             speak("No text was highlighted. Highlight some text on screen and try again.")
             if self.hud_enabled:
                 time.sleep(1.0)
                 self.hud.hide()
             if not self.muted:
-                self.set_tray_state("listening", "Anti: Listening for 'Hey Anti'")
+                self.set_tray_state("listening", "AudioMind: Listening for 'Hey Anti'")
+            else:
+                self.set_tray_state("muted", "AudioMind: Microphone Muted")
 
     def send_remote_ack(self, dispatch_id: str, status: str = "EXECUTED", summary: Optional[str] = None):
         """Sends execution or rejection ACK back to Cloud Relay without X-Admin-Key."""
@@ -961,49 +984,57 @@ class AntiTrayApp:
             return
 
         def _speak_worker():
-            try:
-                print(f"\n[🔊 ASSISTANT RESPONSE COMPLETED]: Preparing audio via Ava @ 48kHz...")
-                self.set_tray_state("anti_speaking", "Anti: Preparing audio...")
-                if self.hud_enabled:
-                    self.hud.show(state="thinking", status="Anti • Preparing...")
-
-                def _on_playback_start():
-                    print("[🔊 PLAYBACK COMMENCED]: Audio streaming through headset.")
-                    self.set_tray_state("anti_speaking", "Anti: Speaking...")
+            with self._speak_lock:
+                stop_speech()
+                try:
+                    print(f"\n[🔊 ASSISTANT RESPONSE COMPLETED]: Preparing audio via Ava @ 48kHz...")
+                    self.set_tray_state("anti_speaking", "AudioMind: Preparing audio...")
                     if self.hud_enabled:
-                        self.hud.show(state="speaking", status="Anti • Speaking")
+                        self.hud.show(state="thinking", status="AudioMind • Preparing...")
 
-                def _on_level(level: float):
-                    if self.hud_enabled and is_speaking():
-                        self.hud.update_audio_level(level)
+                    def _on_playback_start():
+                        print("[🔊 PLAYBACK COMMENCED]: Audio streaming through headset.")
+                        self.set_tray_state("anti_speaking", "AudioMind: Speaking...")
+                        if self.hud_enabled:
+                            self.hud.show(state="speaking", status="AudioMind • Speaking")
 
-                speak(text, on_start=_on_playback_start, on_level=_on_level)
+                    def _on_level(level: float):
+                        if self.hud_enabled and is_speaking():
+                            self.hud.update_audio_level(level)
 
-            except Exception as e:
-                print(f"[!] Read-aloud error: {e}")
-            finally:
-                if not is_speech_active():
-                    if self.hud_enabled:
-                        self.hud.hide()
-                    if not self.muted:
-                        self.set_tray_state("listening", "Anti: Listening for 'Hey Anti'")
+                    speak(text, on_start=_on_playback_start, on_level=_on_level)
+
+                except Exception as e:
+                    print(f"[!] Read-aloud error: {e}")
+                finally:
+                    if is_speaking():
+                        pass
+                    elif is_paused():
+                        if self.hud_enabled:
+                            self.hud.set_status("AudioMind • Paused", state="paused")
+                        self.set_tray_state("paused", "AudioMind: Speech Paused")
                     else:
-                        self.set_tray_state("muted", "Anti: Microphone Muted")
+                        if self.hud_enabled:
+                            self.hud.hide()
+                        if not self.muted:
+                            self.set_tray_state("listening", "AudioMind: Listening for 'Hey Anti'")
+                        else:
+                            self.set_tray_state("muted", "AudioMind: Microphone Muted")
 
         threading.Thread(target=_speak_worker, daemon=True).start()
 
     def toggle_mute(self, icon, item):
         self.muted = not self.muted
         if self.muted:
-            self.set_tray_state("muted", "Anti: Microphone Muted (Paused)")
+            self.set_tray_state("muted", "AudioMind: Microphone Muted (Paused)")
             if self.hud_enabled:
-                self.hud.show(state="idle", status="Anti • Muted")
+                self.hud.show(state="idle", status="AudioMind • Muted")
                 time.sleep(1.0)
                 self.hud.hide()
         else:
-            self.set_tray_state("listening", "Anti: Listening for 'Hey Anti'")
+            self.set_tray_state("listening", "AudioMind: Listening for 'Hey Anti'")
             if self.hud_enabled:
-                self.hud.show(state="listening", status="Anti • Listening")
+                self.hud.show(state="listening", status="AudioMind • Listening")
                 time.sleep(1.0)
                 self.hud.hide()
 
@@ -1019,14 +1050,14 @@ class AntiTrayApp:
 
     def test_greeting(self, icon=None, item=None):
         def _greet():
-            self.set_tray_state("anti_speaking", "Anti: Speaking...")
+            self.set_tray_state("anti_speaking", "AudioMind: Speaking...")
             if self.hud_enabled:
-                self.hud.show(state="speaking", status="Anti • Speaking")
+                self.hud.show(state="speaking", status="AudioMind • Speaking")
                 self.hud.update_audio_level(0.75)
-            speak("Hey! Anti is online and guarding your terminal.")
+            speak("Hey! AudioMind is online and guarding your terminal.")
             if self.hud_enabled:
                 self.hud.hide()
-            self.set_tray_state("listening", "Anti: Listening for 'Hey Anti'")
+            self.set_tray_state("listening", "AudioMind: Listening for 'Hey Anti'")
         threading.Thread(target=_greet, daemon=True).start()
 
     def open_firewall_audit(self, icon=None, item=None):
@@ -1101,7 +1132,7 @@ class AntiTrayApp:
                     collected_frames.extend(list(pre_roll))
                     print(f"[{time.strftime('%X')}] [🗣️ SPEECH DETECTED]: Recording utterance (RMS: {rms:.1f}, silence threshold: {silence_threshold:.1f})...")
                     if self.hud_enabled:
-                        self.hud.set_status("Anti • Listening", state="listening")
+                        self.hud.set_status("AudioMind • Listening", state="listening")
                 else:
                     if now - start_time >= initial_timeout_sec:
                         print(f"[{time.strftime('%X')}] [ℹ️ INITIAL TIMEOUT]: No speech detected within {initial_timeout_sec}s.")
@@ -1429,9 +1460,9 @@ class AntiTrayApp:
 
                             print(f"\n[⚡ TRIGGER] 'Hey Anti' recognized! Score: {score:.3f}")
                             # Update Tray & HUD
-                            self.set_tray_state("user_speaking", "Anti: Listening for your command...")
+                            self.set_tray_state("user_speaking", "AudioMind: Listening for your command...")
                             if self.hud_enabled:
-                                self.hud.show(state="listening", status="Anti • Listening")
+                                self.hud.show(state="listening", status="AudioMind • Listening")
 
                             # Play wake acknowledgment chime
                             play_chime(rising=True)
@@ -1439,9 +1470,9 @@ class AntiTrayApp:
                             # Capture user command audio with dual-phase VAD
                             audio_buf, status_reason = self.capture_command_audio(aec_stream)
                             if status_reason == "initial_timeout" or len(audio_buf) == 0:
-                                self.set_tray_state("listening", "Anti: Listening for 'Hey Anti'")
+                                self.set_tray_state("listening", "AudioMind: Listening for 'Hey Anti'")
                                 if self.hud_enabled:
-                                    self.hud.set_status("Anti • No Speech", state="idle")
+                                    self.hud.set_status("AudioMind • No Speech", state="idle")
                                     time.sleep(1.2)
                                     self.hud.hide()
                                 if was_speaking and is_paused():
@@ -1453,19 +1484,19 @@ class AntiTrayApp:
 
                             # Transcribe
                             if self.hud_enabled:
-                                self.hud.set_status("Anti • Thinking", state="processing")
-                            self.set_tray_state("processing", "Anti: Processing command...")
+                                self.hud.set_status("AudioMind • Thinking", state="processing")
+                            self.set_tray_state("processing", "AudioMind: Processing command...")
 
                             prompt_text = self.transcribe(audio_buf)
                             if not prompt_text:
                                 print(f"[{time.strftime('%X')}] [⚠️ STT]: No recognizable words in {len(audio_buf)/16000:.1f}s audio.")
                                 if self.hud_enabled:
-                                    self.hud.set_status("Anti • Didn't Catch That", state="idle")
+                                    self.hud.set_status("AudioMind • Didn't Catch That", state="idle")
                                     time.sleep(1.2)
                                     self.hud.hide()
                                 if was_speaking and is_paused():
                                     resume_speech()
-                                self.set_tray_state("listening", "Anti: Listening for 'Hey Anti'")
+                                self.set_tray_state("listening", "AudioMind: Listening for 'Hey Anti'")
                                 aec_stream.drain()
                                 self.model.reset()
                                 wake_cooldown_until = time.time() + 0.5
@@ -1480,9 +1511,9 @@ class AntiTrayApp:
                             if intent == "PAUSE":
                                 pause_speech()
                                 play_chime(rising=False)
-                                self.set_tray_state("muted", "Anti: Speech Paused (Click to Resume)")
+                                self.set_tray_state("paused", "AudioMind: Speech Paused (Click to Resume)")
                                 if self.hud_enabled:
-                                    self.hud.set_status("Anti • Paused", state="paused")
+                                    self.hud.set_status("AudioMind • Paused", state="paused")
                                 print(f"[⏸️ VOICE COMMAND]: Speech paused by user request.")
                                 aec_stream.drain()
                                 self.model.reset()
@@ -1492,9 +1523,9 @@ class AntiTrayApp:
                             elif intent == "RESUME":
                                 resume_speech()
                                 play_chime(rising=True)
-                                self.set_tray_state("anti_speaking", "Anti: Speaking...")
+                                self.set_tray_state("anti_speaking", "AudioMind: Speaking...")
                                 if self.hud_enabled:
-                                    self.hud.set_status("Anti • Speaking", state="speaking")
+                                    self.hud.set_status("AudioMind • Speaking", state="speaking")
                                 print(f"[▶️ VOICE COMMAND]: Speech resumed by user request.")
                                 aec_stream.drain()
                                 self.model.reset()
@@ -1508,7 +1539,7 @@ class AntiTrayApp:
                                     resume_speech()
                                 play_chime(rising=True)
                                 if self.hud_enabled:
-                                    self.hud.set_status(f"Anti • Ch {cur_ch}/{tot_ch}: {title[:20]}", state="speaking")
+                                    self.hud.set_status(f"AudioMind • Ch {cur_ch}/{tot_ch}: {title[:20]}", state="speaking")
                                 print(f"[⏭️ VOICE COMMAND]: Skipped to Chapter {cur_ch}/{tot_ch} ({title}).")
                                 aec_stream.drain()
                                 self.model.reset()
@@ -1523,7 +1554,7 @@ class AntiTrayApp:
                                         resume_speech()
                                     play_chime(rising=True)
                                     if self.hud_enabled:
-                                        self.hud.set_status(f"Anti • Ch {cur_ch}/{tot_ch}: {title[:20]}", state="speaking")
+                                        self.hud.set_status(f"AudioMind • Ch {cur_ch}/{tot_ch}: {title[:20]}", state="speaking")
                                     print(f"[⏮️ VOICE COMMAND]: Repeated Chapter {cur_ch}/{tot_ch} ({title}).")
                                 elif self.last_spoken_summary:
                                     self.replay_last_response()
@@ -1538,7 +1569,7 @@ class AntiTrayApp:
                                     resume_speech()
                                 play_chime(rising=True)
                                 if self.hud_enabled:
-                                    self.hud.set_status("Anti • Rewound 5s", state="speaking")
+                                    self.hud.set_status("AudioMind • Rewound 5s", state="speaking")
                                 print(f"[⏪ VOICE COMMAND]: Rewound 5 seconds to {new_pos:.1f}s.")
                                 aec_stream.drain()
                                 self.model.reset()
@@ -1550,7 +1581,7 @@ class AntiTrayApp:
                                 play_chime(rising=False)
                                 if self.hud_enabled:
                                     self.hud.hide()
-                                self.set_tray_state("listening", "Anti: Listening for 'Hey Anti'")
+                                self.set_tray_state("listening", "AudioMind: Listening for 'Hey Anti'")
                                 print(f"[⏹️ VOICE COMMAND]: Speech stopped by user request.")
                                 aec_stream.drain()
                                 self.model.reset()
@@ -1576,18 +1607,18 @@ class AntiTrayApp:
                             stop_speech()
 
                             if self.hud_enabled:
-                                self.hud.set_status("Anti • Thinking", state="processing")
-                            self.set_tray_state("processing", "Anti: Evaluating security firewall...")
+                                self.hud.set_status("AudioMind • Thinking", state="processing")
+                            self.set_tray_state("processing", "AudioMind: Evaluating security firewall...")
 
                             # Firewall Verification
                             evaluation = self.firewall.evaluate(prompt_text)
 
                             if evaluation.tier == RiskTier.RED:
                                 play_chime(rising=False)
-                                self.set_tray_state("muted", "Anti: Command Blocked by Firewall")
+                                self.set_tray_state("muted", "AudioMind: Command Blocked by Firewall")
                                 if self.hud_enabled:
-                                    self.hud.set_status("Anti • Blocked", state="processing")
-                                speak("Anti cannot execute that command. It was blocked by the security firewall.")
+                                    self.hud.set_status("AudioMind • Blocked", state="processing")
+                                speak("AudioMind cannot execute that command. It was blocked by the security firewall.")
                             
                             # If an unconfirmed remote dispatch was waiting in chat, cancel it
                             if getattr(self, "pending_remote_dispatch", None):
@@ -1598,10 +1629,10 @@ class AntiTrayApp:
 
                             if evaluation.tier == RiskTier.YELLOW:
                                 play_chime(rising=True)
-                                self.set_tray_state("anti_speaking", "Anti: Caution verified. Dispatching...")
+                                self.set_tray_state("anti_speaking", "AudioMind: Caution verified. Dispatching...")
                                 if self.hud_enabled:
-                                    self.hud.set_status("Anti • Speaking", state="speaking")
-                                speak("Caution verified. Anti is sending to chat.")
+                                    self.hud.set_status("AudioMind • Speaking", state="speaking")
+                                speak("Caution verified. AudioMind is sending to chat.")
                                 if not self.submit_to_antigravity_chat(prompt_text):
                                     if getattr(self, "last_injection_error", None) != "Antigravity is running as administrator, so Anti can't type into it.":
                                         speak("I couldn't focus Antigravity, so nothing was typed.")
@@ -1609,9 +1640,9 @@ class AntiTrayApp:
                             elif evaluation.tier == RiskTier.GREEN:
                                 # Instant non-blocking submit chime & zero-delay prompt injection
                                 play_submit_chime()
-                                self.set_tray_state("processing", "Anti: Working in IDE...")
+                                self.set_tray_state("processing", "AudioMind: Working in IDE...")
                                 if self.hud_enabled:
-                                    self.hud.set_status("Anti • Sent", state="processing")
+                                    self.hud.set_status("AudioMind • Sent", state="processing")
                                 if not self.submit_to_antigravity_chat(prompt_text):
                                     if getattr(self, "last_injection_error", None) != "Antigravity is running as administrator, so Anti can't type into it.":
                                         speak("I couldn't focus Antigravity, so nothing was typed.")
@@ -1620,7 +1651,7 @@ class AntiTrayApp:
                             time.sleep(1.2)
                             if self.hud_enabled:
                                 self.hud.hide()
-                            self.set_tray_state("listening", "Anti: Listening for 'Hey Anti'")
+                            self.set_tray_state("listening", "AudioMind: Listening for 'Hey Anti'")
 
                             # Drain buffered mic frames and enforce refractory cooldown to eliminate trailing double-triggers
                             aec_stream.drain()
@@ -1691,7 +1722,7 @@ class AntiTrayApp:
                             if verdict.tier == RiskTier.RED or not verdict.allowed:
                                 print(f"\n[🚫 REMOTE DISPATCH BLOCKED BY FIREWALL]: id={dispatch_id}: {verdict.reason}")
                                 if self.hud_enabled:
-                                    self.hud.show(state="muted", status="Anti • Command Blocked")
+                                    self.hud.show(state="muted", status="AudioMind • Command Blocked")
                                     time.sleep(1.5)
                                     self.hud.hide()
                                 self.send_remote_ack(dispatch_id, status="FAILED", summary=f"Blocked by Command Firewall (RED Tier): {verdict.reason}")
@@ -1708,9 +1739,9 @@ class AntiTrayApp:
                             }
 
                             # Visual feedback on Desktop HUD and Tray
-                            self.set_tray_state("processing", f"Anti: Remote Command ({instruction[:25]}...)")
+                            self.set_tray_state("processing", f"AudioMind: Remote Command ({instruction[:25]}...)")
                             if self.hud_enabled:
-                                self.hud.show(state="thinking", status="Anti • Remote Command")
+                                self.hud.show(state="thinking", status="AudioMind • Remote Command")
 
                             # Play submit chime
                             play_submit_chime()
@@ -1722,18 +1753,18 @@ class AntiTrayApp:
                                 reason = getattr(self, "last_injection_error", None) or "Antigravity window could not be focused on the desktop. Nothing was typed."
                                 self.send_remote_ack(dispatch_id, status="FAILED", summary=reason)
                                 if self.hud_enabled:
-                                    self.hud.set_status("Anti • IDE Not Focused", state="idle")
+                                    self.hud.set_status("AudioMind • IDE Not Focused", state="idle")
                                     time.sleep(1.5)
                                     self.hud.hide()
-                                self.set_tray_state("listening", "Anti: Listening for 'Hey Anti'")
+                                self.set_tray_state("listening", "AudioMind: Listening for 'Hey Anti'")
                                 continue
 
                             if self.hud_enabled:
-                                self.hud.set_status("Anti • Pasted (Enter to Run)", state="processing")
+                                self.hud.set_status("AudioMind • Pasted (Enter to Run)", state="processing")
                                 time.sleep(1.5)
                                 self.hud.hide()
 
-                            self.set_tray_state("listening", "Anti: Listening for 'Hey Anti'")
+                            self.set_tray_state("listening", "AudioMind: Listening for 'Hey Anti'")
             except HTTPError as e:
                 now = time.time()
                 if e.code in (401, 403):

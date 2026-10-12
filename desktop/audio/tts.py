@@ -163,21 +163,76 @@ def extract_chapters_from_text(raw_text: str) -> list[tuple[str, str]]:
 
     return [("Overview", text)]
 
-async def _synth_one(c_text: str, voice: str = DEFAULT_VOICE, rate: str = "+0%", pitch: str = "+0Hz") -> bytes:
-    """Synthesizes a single chunk of text into MP3 bytes via Edge-TTS with 1 retry."""
+_EDGE_TTS_HEALTHY = True
+_EDGE_TTS_LAST_FAILURE = 0.0
+
+def synth_sapi_pcm(text: str, samplerate: int = 48000) -> np.ndarray:
+    """
+    Offline local Windows TTS fallback via SAPI.SpVoice and SpMemoryStream.
+    Produces 48kHz stereo float32 PCM without network dependencies or 403 errors.
+    """
+    if sys.platform != "win32" or not text or not text.strip():
+        return np.empty((0, 2), dtype=np.float32)
+    try:
+        import comtypes
+        import comtypes.client
+        try:
+            comtypes.CoInitialize()
+        except Exception:
+            pass
+        voice = comtypes.client.CreateObject('SAPI.SpVoice')
+        try:
+            for token in voice.GetVoices():
+                if "zira" in token.GetDescription().lower():
+                    voice.Voice = token
+                    break
+        except Exception:
+            pass
+        stream = comtypes.client.CreateObject('SAPI.SpMemoryStream')
+        fmt = comtypes.client.CreateObject('SAPI.SpAudioFormat')
+        fmt.Type = 39  # SAFT48kHz16BitStereo
+        stream.Format = fmt
+        voice.AudioOutputStream = stream
+        voice.Speak(text)
+        raw_bytes = bytes(stream.GetData())
+        if not raw_bytes:
+            return np.empty((0, 2), dtype=np.float32)
+        pcm = (np.frombuffer(raw_bytes, dtype=np.int16).astype(np.float32) / 32768.0).reshape(-1, 2)
+        return pcm
+    except Exception as e:
+        print(f"[!] SAPI fallback error: {e}")
+        return np.empty((0, 2), dtype=np.float32)
+
+async def _synth_one(c_text: str, voice: str = DEFAULT_VOICE, rate: str = "+0%", pitch: str = "+0Hz", timeout: float = 6.0) -> bytes:
+    """Synthesizes a single chunk of text into MP3 bytes via Edge-TTS with timeout, circuit breaker and 1 retry."""
+    global _EDGE_TTS_HEALTHY, _EDGE_TTS_LAST_FAILURE
+    if not _EDGE_TTS_HEALTHY and (time.time() - _EDGE_TTS_LAST_FAILURE < 300):
+        return b""
+
     clean_c = normalize_phonetics(c_text)
     if not clean_c or not clean_c.strip():
         return b""
     for attempt in range(2):
         try:
-            communicate = edge_tts.Communicate(clean_c, voice, rate=rate, pitch=pitch)
-            data = b""
-            async for chunk in communicate.stream():
-                if chunk["type"] == "audio":
-                    data += chunk["data"]
-            if data:
+            async def _stream_one():
+                communicate = edge_tts.Communicate(clean_c, voice, rate=rate, pitch=pitch)
+                data = b""
+                async for chunk in communicate.stream():
+                    if chunk["type"] == "audio":
+                        data += chunk["data"]
                 return data
-        except Exception:
+
+            data = await asyncio.wait_for(_stream_one(), timeout=timeout)
+            if data:
+                _EDGE_TTS_HEALTHY = True
+                return data
+        except Exception as e:
+            err_str = str(e)
+            if "403" in err_str or "Invalid response status" in err_str:
+                _EDGE_TTS_HEALTHY = False
+                _EDGE_TTS_LAST_FAILURE = time.time()
+                print(f"[!] Edge-TTS service returned 403 Forbidden. Tripping circuit breaker to local SAPI.")
+                return b""
             if attempt == 0:
                 await asyncio.sleep(0.3)
             else:
@@ -214,15 +269,20 @@ async def speak_async(
     if cleaned_chapters:
         chapters = cleaned_chapters
 
-    sem = asyncio.Semaphore(3)
+    clean_text = clean_markdown_for_speech(text)
+    clean_text = normalize_phonetics(clean_text)
 
-    async def _synth_with_sem(c_text: str) -> bytes:
-        async with sem:
-            return await _synth_one(c_text, voice=voice, rate=rate, pitch=pitch)
+    # 1. Multi-chapter parallel synthesis with Edge-TTS (if healthy)
+    global _EDGE_TTS_HEALTHY, _EDGE_TTS_LAST_FAILURE
+    use_edge = _EDGE_TTS_HEALTHY or (time.time() - _EDGE_TTS_LAST_FAILURE >= 300)
 
-    # Multi-chapter parallel synthesis with seamless concatenation and natural pauses
-    if len(chapters) > 1:
+    if use_edge and len(chapters) > 1:
         try:
+            sem = asyncio.Semaphore(3)
+            async def _synth_with_sem(c_text: str) -> bytes:
+                async with sem:
+                    return await _synth_one(c_text, voice=voice, rate=rate, pitch=pitch)
+
             tasks = [_synth_with_sem(c[1]) for c in chapters]
             mp3_list = await asyncio.gather(*tasks)
 
@@ -230,7 +290,7 @@ async def speak_async(
             titles = []
             for i, (title, _) in enumerate(chapters):
                 mp3_data = mp3_list[i] if i < len(mp3_list) else b""
-                if not mp3_data:
+                if not mp3_data and _EDGE_TTS_HEALTHY:
                     notice_text = f"Part {i + 1} could not be read."
                     print(f"[!] Chapter {i + 1} ('{title}') synthesis failed. Synthesizing spoken notice.")
                     notice_mp3 = await _synth_with_sem(notice_text)
@@ -270,24 +330,73 @@ async def speak_async(
                     global_player.wait()
                     return
         except Exception as e:
-            print(f"[!] Parallel chapter synthesis fallback: {e}")
+            print(f"[!] Parallel Edge-TTS chapter synthesis skipped/failed: {e}")
 
-    # Single-chapter or fallback synthesis:
-    clean_text = clean_markdown_for_speech(text)
-    clean_text = normalize_phonetics(clean_text)
-    mp3_data = await _synth_with_sem(clean_text)
-    if not mp3_data:
-        return
-    audio_f32 = decode_mp3_to_pcm(mp3_data)
-    global_player.play_pcm(
-        audio_f32,
-        chapter_markers=[0],
-        chapter_titles=[chapters[0][0] if chapters else "Overview"],
-        on_start=on_start,
-        on_level=on_level,
-        on_finish=on_finish
-    )
-    global_player.wait()
+    # 2. Single-chapter Edge-TTS synthesis (if healthy)
+    if use_edge and _EDGE_TTS_HEALTHY:
+        try:
+            mp3_data = await _synth_one(clean_text, voice=voice, rate=rate, pitch=pitch)
+            if mp3_data:
+                audio_f32 = decode_mp3_to_pcm(mp3_data)
+                global_player.play_pcm(
+                    audio_f32,
+                    chapter_markers=[0],
+                    chapter_titles=[chapters[0][0] if chapters else "Overview"],
+                    on_start=on_start,
+                    on_level=on_level,
+                    on_finish=on_finish
+                )
+                global_player.wait()
+                return
+        except Exception as e:
+            print(f"[!] Edge-TTS single pass synthesis failed: {e}")
+
+    # 3. Local Windows SAPI Offline Fallback (Immediate, Fail-Safe, 403-Immune)
+    print("[!] Seamlessly using local Windows SAPI speech engine (offline fail-safe).")
+    if len(chapters) > 1:
+        pcm_chunks = []
+        titles = []
+        for title, body in chapters:
+            c_pcm = synth_sapi_pcm(body)
+            if len(c_pcm) > 0:
+                pcm_chunks.append(c_pcm)
+                titles.append(title)
+        if pcm_chunks and len(pcm_chunks) == len(chapters):
+            silence = np.zeros((int(0.30 * 48000), 2), dtype=np.float32)
+            combined = []
+            markers = []
+            curr_s = 0
+            for i, pcm in enumerate(pcm_chunks):
+                markers.append(curr_s)
+                combined.append(pcm)
+                curr_s += len(pcm)
+                if i < len(pcm_chunks) - 1:
+                    combined.append(silence)
+                    curr_s += len(silence)
+            if combined:
+                audio_f32 = np.concatenate(combined)
+                global_player.play_pcm(
+                    audio_f32,
+                    chapter_markers=markers,
+                    chapter_titles=titles,
+                    on_start=on_start,
+                    on_level=on_level,
+                    on_finish=on_finish
+                )
+                global_player.wait()
+                return
+
+    sapi_pcm = synth_sapi_pcm(clean_text)
+    if len(sapi_pcm) > 0:
+        global_player.play_pcm(
+            sapi_pcm,
+            chapter_markers=[0],
+            chapter_titles=[chapters[0][0] if chapters else "Overview"],
+            on_start=on_start,
+            on_level=on_level,
+            on_finish=on_finish
+        )
+        global_player.wait()
 
 def stop_speech():
     """Immediately halt any active audio playback."""

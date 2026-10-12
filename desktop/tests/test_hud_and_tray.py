@@ -358,4 +358,39 @@ def test_capture_highlighted_text_fallback(monkeypatch):
     assert "Sample Highlighted Markdown" in res
     assert "Here is selected text" in res
 
+def test_tts_sapi_fallback_when_edge_tts_fails(monkeypatch):
+    """Verify that speak_async automatically fails over to local Windows SAPI when Edge-TTS fails."""
+    import asyncio
+    import numpy as np
+    import desktop.audio.tts as tts_module
+
+    # Force Edge-TTS to return b""
+    async def failing_synth_one(c_text, **kwargs):
+        return b""
+
+    # SAPI returns dummy 48kHz stereo PCM
+    sapi_called = []
+    def mock_sapi_pcm(text, samplerate=48000):
+        sapi_called.append(text)
+        return np.ones((24000, 2), dtype=np.float32) * 0.3
+
+    played_pcm = []
+    class MockPlayer:
+        def play_pcm(self, audio_f32, chapter_markers=None, chapter_titles=None, **kwargs):
+            played_pcm.append(audio_f32)
+        def wait(self):
+            pass
+
+    monkeypatch.setattr(tts_module, "_synth_one", failing_synth_one)
+    monkeypatch.setattr(tts_module, "synth_sapi_pcm", mock_sapi_pcm)
+    monkeypatch.setattr(tts_module, "global_player", MockPlayer())
+
+    test_text = "This is a test prompt that should seamlessly play through SAPI."
+    asyncio.run(tts_module.speak_async(test_text))
+
+    assert len(sapi_called) >= 1
+    assert len(played_pcm) == 1
+    assert played_pcm[0].shape == (24000, 2)
+
+
 
