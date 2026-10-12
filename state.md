@@ -3,12 +3,12 @@
 <!-- Read on Turn 1 boot. Strictly pruned after milestone completion. -->
 
 ## Current Objective
-- Paused Audio Auto-Advance & Multi-Step Output History Navigation.
+- 10-Band Hi-Fi Digital Spectrum Analyzer & Elevated Ice (White) Palette.
 
 ## Status & Gate Verification
-- [x] Issue 1 (Paused Auto-Advance): If speech is paused when a new response arrives from any session/agent, audio automatically terminates pause and advances immediately into playback.
-- [x] Issue 2 (Multi-Step Back Navigation): 20-item ring buffer (`output_history`). Step back 1, 2, or 3+ times via voice ("previous output", "go back one output"), HUD `[⏮]`, tray menu, or `Ctrl+Alt+P`.
+- [x] 10-Band Hi-Fi Equalizer: Upgraded from 8 thin needles to 10 prominent rounded bars (3.5px wide, up to 24px tall) with smooth color interpolation, multi-frequency voice modeling, and fast-attack/analog decay ballistics.
+- [x] Elevated Ice Theme: Replaced dull gray with luminous snow white (`#ffffff`) and vibrant glacial sky blue (`#38bdf8`) for high contrast and vivid motion on dark LCD.
 - [x] Verification: 54/54 desktop tests passed, 7/7 relay tests passed. Topology & cartography verified. Synced to `adamm285-dev/audiomind` on `main`.
 
 ## Immediate Next Action (Post-Compact)
-- Present verified solutions for Issues 1 and 2 to user.
+- Present elevated 10-band spectrum analyzer and ice theme preview to user.

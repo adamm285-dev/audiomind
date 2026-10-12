@@ -51,13 +51,35 @@ THEME_PALETTES = {
         "speaking":  {"glow": "#e040fb", "bar1": "#e040fb", "bar2": "#00e5ff", "dot": "#00e5ff"},
     },
     "ice": {
-        "listening": {"glow": "#80deea", "bar1": "#b2ebf2", "bar2": "#ffffff", "dot": "#ffffff"},
-        "speaking":  {"glow": "#ffffff", "bar1": "#ffffff", "bar2": "#90a4ae", "dot": "#80d8ff"},
+        "listening": {"glow": "#38bdf8", "bar1": "#7dd3fc", "bar2": "#ffffff", "dot": "#38bdf8"},
+        "speaking":  {"glow": "#38bdf8", "bar1": "#ffffff", "bar2": "#38bdf8", "dot": "#38bdf8"},
     },
 }
 
+def _hex_to_rgb(hex_str: str) -> tuple[int, int, int]:
+    hex_str = hex_str.lstrip("#")
+    if len(hex_str) == 3:
+        hex_str = "".join(c * 2 for c in hex_str)
+    return tuple(int(hex_str[i:i+2], 16) for i in (0, 2, 4))
+
+def _rgb_to_hex(r: float, g: float, b: float) -> str:
+    return f"#{max(0, min(255, int(r))):02x}{max(0, min(255, int(g))):02x}{max(0, min(255, int(b))):02x}"
+
+def _interpolate_color(c1: str, c2: str, t: float) -> str:
+    """Linearly interpolate between two hex color codes."""
+    try:
+        r1, g1, b1 = _hex_to_rgb(c1)
+        r2, g2, b2 = _hex_to_rgb(c2)
+        t = max(0.0, min(1.0, t))
+        r = r1 + (r2 - r1) * t
+        g = g1 + (g2 - g1) * t
+        b = b1 + (b2 - b1) * t
+        return _rgb_to_hex(r, g, b)
+    except Exception:
+        return c1 if t < 0.5 else c2
+
 class WaveformHud:
-    def __init__(self, position="bottom_right", theme="cyberpunk"):
+    def __init__(self, position="bottom_right", theme="cyberpunk", width=480):
         self.root = None
         self.canvas = None
         self.is_running = False
@@ -69,7 +91,8 @@ class WaveformHud:
         self.phase = 0.0
         self.position = position  # "bottom_right" or "bottom_center"
         self.theme = theme if theme in THEME_PALETTES else "cyberpunk"
-        self.bars = [3.0] * 7
+        self.num_bars = 10
+        self.bars = [3.5] * 10
         self._was_visible = False
         self.on_click = None
         self.on_right_click = None
@@ -558,9 +581,9 @@ class WaveformHud:
                 self.canvas.create_line(p1_x, dot_y - pause_h/2, p1_x, dot_y + pause_h/2, fill="#ffd600", width=pause_w, capstyle="round")
                 self.canvas.create_line(p2_x, dot_y - pause_h/2, p2_x, dot_y + pause_h/2, fill="#ffd600", width=pause_w, capstyle="round")
             else:
-                # 8 Digital EQ Spectrum Analyzer Bars inside LCD
-                num_bars = 8
-                bar_w = 2.5
+                # 10-Band Hi-Fi Digital Spectrum Analyzer inside LCD
+                num_bars = 10
+                bar_w = 3.5
                 spacing = 4.5
                 total_bars_w = num_bars * bar_w + (num_bars - 1) * spacing
                 start_x = w - total_bars_w - 20
@@ -569,28 +592,43 @@ class WaveformHud:
                     target_level = self.audio_level
 
                 for i in range(num_bars):
-                    dist = abs(i - num_bars / 2) / (num_bars / 2)
-                    bell = math.exp(-2.0 * (dist ** 2))
-                    wave = math.sin(self.phase * 2.4 + i * 0.65) * 0.35 + 0.65
+                    t = i / max(1, num_bars - 1)
+                    dist = abs(i - (num_bars - 1) / 2) / ((num_bars - 1) / 2)
+                    bell = math.exp(-1.4 * (dist ** 2))
 
                     if self.state == "speaking":
-                        cadence = (math.sin(self.phase * 1.8 + i * 1.2) * 0.25 + 0.75)
-                        level_factor = max(target_level, 0.40)
-                        target_h = max(3.5, (level_factor * 18.0 + 3.0) * bell * wave * cadence)
+                        # Multi-band frequency simulation: bass, vocal core, sibilants
+                        if i < 3:
+                            freq_wave = math.sin(self.phase * 1.6 + i * 0.5) * 0.35 + 0.65
+                        elif i < 7:
+                            freq_wave = math.sin(self.phase * 2.3 + i * 0.8) * 0.40 + 0.60
+                        else:
+                            freq_wave = math.sin(self.phase * 3.2 + i * 1.1) * 0.45 + 0.55
+
+                        cadence = (math.sin(self.phase * 1.9 + i * 0.9) * 0.25 + 0.75)
+                        level_mult = max(0.35, target_level)
+                        target_h = max(4.0, (level_mult * 20.0 + 3.0) * bell * freq_wave * cadence)
                     elif self.state == "listening":
-                        target_h = max(3.0, (target_level * 18.0 + 3.0) * bell * wave)
+                        ripple = math.sin(self.phase * 2.0 + i * 0.6) * 0.35 + 0.65
+                        level_mult = max(0.15, target_level)
+                        target_h = max(3.5, (level_mult * 18.0 + 2.5) * bell * ripple)
                     else:
-                        target_h = 3.0
+                        resting = math.sin(self.phase * 1.2 + i * 0.5) * 0.2 + 0.8
+                        target_h = 3.5 * resting
 
-                    self.bars[i % 7] = self.bars[i % 7] * 0.55 + target_h * 0.45
-                    bh = min(18.0, max(2.5, self.bars[i % 7]))
+                    # Snappy analog attack, smooth organic decay
+                    cur_h = self.bars[i]
+                    if target_h > cur_h:
+                        self.bars[i] = cur_h * 0.30 + target_h * 0.70
+                    else:
+                        self.bars[i] = cur_h * 0.82 + target_h * 0.18
 
+                    bh = min(24.0, max(3.5, self.bars[i]))
                     bx = start_x + i * (bar_w + spacing)
                     by1 = dot_y - bh / 2
                     by2 = dot_y + bh / 2
 
-                    t = i / num_bars
-                    bar_color = bar_color1 if t < 0.5 else bar_color2
+                    bar_color = _interpolate_color(bar_color1, bar_color2, t)
                     self.canvas.create_line(bx, by1, bx, by2, fill=bar_color, width=bar_w, capstyle="round")
 
             # Deck 2: Physical CD-Player Transport Buttons
@@ -668,9 +706,9 @@ class WaveformHud:
                 self.canvas.create_line(p1_x, dot_y - pause_h/2, p1_x, dot_y + pause_h/2, fill="#ffd600", width=pause_w, capstyle="round")
                 self.canvas.create_line(p2_x, dot_y - pause_h/2, p2_x, dot_y + pause_h/2, fill="#ffd600", width=pause_w, capstyle="round")
             else:
-                num_bars = 8
-                bar_w = 2.5
-                spacing = 4.5
+                num_bars = 10
+                bar_w = 3.0
+                spacing = 3.5
                 total_bars_w = num_bars * bar_w + (num_bars - 1) * spacing
                 start_x = w - total_bars_w - 20
 
@@ -678,28 +716,40 @@ class WaveformHud:
                     target_level = self.audio_level
 
                 for i in range(num_bars):
-                    dist = abs(i - num_bars / 2) / (num_bars / 2)
-                    bell = math.exp(-2.0 * (dist ** 2))
-                    wave = math.sin(self.phase * 2.4 + i * 0.65) * 0.35 + 0.65
+                    t = i / max(1, num_bars - 1)
+                    dist = abs(i - (num_bars - 1) / 2) / ((num_bars - 1) / 2)
+                    bell = math.exp(-1.4 * (dist ** 2))
 
                     if self.state == "speaking":
-                        cadence = (math.sin(self.phase * 1.8 + i * 1.2) * 0.25 + 0.75)
-                        level_factor = max(target_level, 0.40)
-                        target_h = max(3.5, (level_factor * 18.0 + 3.0) * bell * wave * cadence)
+                        if i < 3:
+                            freq_wave = math.sin(self.phase * 1.6 + i * 0.5) * 0.35 + 0.65
+                        elif i < 7:
+                            freq_wave = math.sin(self.phase * 2.3 + i * 0.8) * 0.40 + 0.60
+                        else:
+                            freq_wave = math.sin(self.phase * 3.2 + i * 1.1) * 0.45 + 0.55
+
+                        cadence = (math.sin(self.phase * 1.9 + i * 0.9) * 0.25 + 0.75)
+                        level_mult = max(0.35, target_level)
+                        target_h = max(3.5, (level_mult * 15.0 + 2.5) * bell * freq_wave * cadence)
                     elif self.state == "listening":
-                        target_h = max(3.0, (target_level * 18.0 + 3.0) * bell * wave)
+                        ripple = math.sin(self.phase * 2.0 + i * 0.6) * 0.35 + 0.65
+                        level_mult = max(0.15, target_level)
+                        target_h = max(3.0, (level_mult * 14.0 + 2.0) * bell * ripple)
                     else:
                         target_h = 3.0
 
-                    self.bars[i % 7] = self.bars[i % 7] * 0.55 + target_h * 0.45
-                    bh = min(18.0, max(2.5, self.bars[i % 7]))
+                    cur_h = self.bars[i]
+                    if target_h > cur_h:
+                        self.bars[i] = cur_h * 0.30 + target_h * 0.70
+                    else:
+                        self.bars[i] = cur_h * 0.82 + target_h * 0.18
 
+                    bh = min(18.0, max(2.5, self.bars[i]))
                     bx = start_x + i * (bar_w + spacing)
                     by1 = dot_y - bh / 2
                     by2 = dot_y + bh / 2
 
-                    t = i / num_bars
-                    bar_color = bar_color1 if t < 0.5 else bar_color2
+                    bar_color = _interpolate_color(bar_color1, bar_color2, t)
                     self.canvas.create_line(bx, by1, bx, by2, fill=bar_color, width=bar_w, capstyle="round")
 
     def destroy(self):
