@@ -700,7 +700,7 @@ def test_waveform_hud_cd_player_transport_controls():
 
     hud = WaveformHud(position="bottom_right")
     assert hud.height == 38
-    assert hud.width == 460
+    assert hud.width == 480
 
     # 1. Verify expansion logic
     hud.state = "idle"
@@ -725,7 +725,7 @@ def test_waveform_hud_cd_player_transport_controls():
     hud._check_expansion()
     assert hud.height == 38
 
-    # 2. Test button hit testing when expanded (height = 84, width = 460)
+    # 2. Test button hit testing when expanded (height = 84, width = 480)
     hud.height = 84
     assert hud._hit_test_button(45, 62) == "prev"
     assert hud._hit_test_button(119, 62) == "rewind"

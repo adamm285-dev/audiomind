@@ -83,7 +83,7 @@ class WaveformHud:
         self.is_hovered = False
         self.hovered_button = None
         self._hover_hint = None
-        self.width = 460
+        self.width = 480
         self.height = 38
         self._thread = None
         self._lock = threading.Lock()
@@ -106,10 +106,6 @@ class WaveformHud:
         self.root.overrideredirect(True)  # Frameless
         self.root.attributes("-topmost", True)
         self.root.attributes("-alpha", 0.0)  # Start hidden
-
-        # Expandable dimensions (400px width; 38px compact pill, 84px expanded CD player console)
-        self.width = 400
-        self.height = 38
 
         # Configure transparent-capable canvas
         try:
@@ -139,21 +135,48 @@ class WaveformHud:
         self._animate()
         self.root.mainloop()
 
+    def _get_button_defs(self, w=None):
+        """Returns button definitions [(id, icon, bx1, bx2), ...] symmetrically centered within width w."""
+        if w is None:
+            w = self.width
+
+        btn_data = [
+            ("prev", "⏮"),
+            ("rewind", "⏪ 5s"),
+            ("play_pause", "▶" if self.state == "paused" else "⏸"),
+            ("forward", "⏩ 5s"),
+            ("next", "⏭"),
+            ("skip", "⏹ Skip"),
+        ]
+
+        num_btns = len(btn_data)
+        bw = 70
+        gap = 8
+        total_w = num_btns * bw + (num_btns - 1) * gap
+
+        # Dynamically scale down if width is narrower than total_w + 20
+        if w < total_w + 20:
+            avail = max(w - 20, 100)
+            gap = max(4, int(avail * 0.08 / (num_btns - 1)))
+            bw = int((avail - (num_btns - 1) * gap) / num_btns)
+            total_w = num_btns * bw + (num_btns - 1) * gap
+
+        start_x = max(6, (w - total_w) // 2)
+
+        defs = []
+        for i, (btn_id, icon) in enumerate(btn_data):
+            bx1 = start_x + i * (bw + gap)
+            bx2 = bx1 + bw
+            defs.append((btn_id, icon, bx1, bx2))
+        return defs
+
     def _hit_test_button(self, x, y):
         """Hit-test (x, y) coordinates against Row 2 CD-player transport buttons."""
         if self.height < 60:
             return None
         if not (46 <= y <= 78):
             return None
-        btn_defs = [
-            ("prev", 12, 78),
-            ("rewind", 86, 152),
-            ("play_pause", 160, 226),
-            ("forward", 234, 300),
-            ("next", 308, 374),
-            ("skip", 382, 448),
-        ]
-        for btn_id, bx1, bx2 in btn_defs:
+        for btn_id, _, bx1, bx2 in self._get_button_defs():
             if bx1 <= x <= bx2:
                 return btn_id
         return None
@@ -571,14 +594,7 @@ class WaveformHud:
                     self.canvas.create_line(bx, by1, bx, by2, fill=bar_color, width=bar_w, capstyle="round")
 
             # Deck 2: Physical CD-Player Transport Buttons
-            btn_defs = [
-                ("prev", "⏮", 12, 78),
-                ("rewind", "⏪ 5s", 86, 152),
-                ("play_pause", "▶" if self.state == "paused" else "⏸", 160, 226),
-                ("forward", "⏩ 5s", 234, 300),
-                ("next", "⏭", 308, 374),
-                ("skip", "⏹ Skip", 382, 448),
-            ]
+            btn_defs = self._get_button_defs(w)
 
             btn_y1 = 48
             btn_y2 = 76
