@@ -90,6 +90,9 @@
 - `__init__.py`
 - `train_hey_anti.py`
 
+### `desktop/resources/`
+- `anti_voice_assistant.ico`
+
 ### `desktop/resources/models/`
 - `hey_anti.onnx`
 - `hey_anti.onnx.data`

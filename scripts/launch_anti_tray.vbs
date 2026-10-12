@@ -8,18 +8,18 @@ RootDir = FSO.GetParentFolderName(ScriptDir)
 
 WshShell.CurrentDirectory = RootDir
 
-PythonExe = RootDir & "\.venv_voice\Scripts\python.exe"
+PythonExe = RootDir & "\.venv_voice\Scripts\pythonw.exe"
 If Not FSO.FileExists(PythonExe) Then
-    PythonExe = RootDir & "\.venv_voice\Scripts\pythonw.exe"
-End If
-If Not FSO.FileExists(PythonExe) Then
-    PythonExe = RootDir & "\.venv\Scripts\python.exe"
+    PythonExe = RootDir & "\.venv_voice\Scripts\python.exe"
 End If
 If Not FSO.FileExists(PythonExe) Then
     PythonExe = RootDir & "\.venv\Scripts\pythonw.exe"
 End If
 If Not FSO.FileExists(PythonExe) Then
-    PythonExe = "python.exe"
+    PythonExe = RootDir & "\.venv\Scripts\python.exe"
+End If
+If Not FSO.FileExists(PythonExe) Then
+    PythonExe = "pythonw.exe"
 End If
 
 AppScript = RootDir & "\desktop\app.py"
