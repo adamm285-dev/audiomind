@@ -33,8 +33,31 @@ def get_primary_work_area():
         pass
     return (0, 0, 1920, 1040)
 
+THEME_PALETTES = {
+    "cyberpunk": {
+        "listening": {"glow": "#00e5ff", "bar1": "#00e5ff", "bar2": "#7c4dff", "dot": "#00e676"},
+        "speaking":  {"glow": "#7c4dff", "bar1": "#7c4dff", "bar2": "#00e5ff", "dot": "#00e5ff"},
+    },
+    "matrix": {
+        "listening": {"glow": "#00ff66", "bar1": "#00ff66", "bar2": "#00cc44", "dot": "#00ffcc"},
+        "speaking":  {"glow": "#39ff14", "bar1": "#39ff14", "bar2": "#76ff03", "dot": "#00ff66"},
+    },
+    "sunset": {
+        "listening": {"glow": "#ff9100", "bar1": "#ffb300", "bar2": "#ff9100", "dot": "#ffd600"},
+        "speaking":  {"glow": "#ff3d00", "bar1": "#ff3d00", "bar2": "#ff9100", "dot": "#ffab00"},
+    },
+    "violet": {
+        "listening": {"glow": "#b388ff", "bar1": "#7c4dff", "bar2": "#b388ff", "dot": "#e040fb"},
+        "speaking":  {"glow": "#e040fb", "bar1": "#e040fb", "bar2": "#00e5ff", "dot": "#00e5ff"},
+    },
+    "ice": {
+        "listening": {"glow": "#80deea", "bar1": "#b2ebf2", "bar2": "#ffffff", "dot": "#ffffff"},
+        "speaking":  {"glow": "#ffffff", "bar1": "#ffffff", "bar2": "#90a4ae", "dot": "#80d8ff"},
+    },
+}
+
 class WaveformHud:
-    def __init__(self, position="bottom_right"):
+    def __init__(self, position="bottom_right", theme="cyberpunk"):
         self.root = None
         self.canvas = None
         self.is_running = False
@@ -45,6 +68,7 @@ class WaveformHud:
         self.audio_level = 0.0
         self.phase = 0.0
         self.position = position  # "bottom_right" or "bottom_center"
+        self.theme = theme if theme in THEME_PALETTES else "cyberpunk"
         self.bars = [3.0] * 7
         self._was_visible = False
         self.on_click = None
@@ -52,6 +76,12 @@ class WaveformHud:
         self.on_double_click = None
         self._thread = None
         self._lock = threading.Lock()
+
+    def set_theme(self, theme: str):
+        """Set active color theme for the HUD ('cyberpunk', 'matrix', 'sunset', 'violet', 'ice')."""
+        with self._lock:
+            if theme in THEME_PALETTES:
+                self.theme = theme
 
     def start(self):
         """Start the Tkinter UI event loop in a dedicated background thread."""
@@ -245,18 +275,19 @@ class WaveformHud:
         w = self.width
         h = self.height
 
-        # Determine theme colors based on state
+        # Determine theme colors based on active theme and state
+        palette = THEME_PALETTES.get(self.theme, THEME_PALETTES["cyberpunk"])
         if self.state == "listening":
-            glow_color = "#00e5ff"      # Cyan
-            bar_color1 = "#00e5ff"      # Cyan
-            bar_color2 = "#7c4dff"      # Violet
-            dot_color = "#00e676"       # Green (listening)
+            glow_color = palette["listening"]["glow"]
+            bar_color1 = palette["listening"]["bar1"]
+            bar_color2 = palette["listening"]["bar2"]
+            dot_color = palette["listening"]["dot"]
             default_status = "Listening..."
         elif self.state == "speaking":
-            glow_color = "#7c4dff"      # Violet
-            bar_color1 = "#7c4dff"      # Violet
-            bar_color2 = "#00e5ff"      # Cyan
-            dot_color = "#00e5ff"       # Cyan
+            glow_color = palette["speaking"]["glow"]
+            bar_color1 = palette["speaking"]["bar1"]
+            bar_color2 = palette["speaking"]["bar2"]
+            dot_color = palette["speaking"]["dot"]
             default_status = "Speaking..."
         elif self.state == "paused":
             glow_color = "#ff9100"      # Orange

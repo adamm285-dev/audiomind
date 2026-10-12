@@ -577,6 +577,74 @@ def test_skip_next_chapter_right_click_workflow(monkeypatch):
     app_module.AntiTrayApp.skip_next_chapter(asst)
     assert asst.skipped_output is True
 
+def test_hud_themes_and_speed_control():
+    """Verify Waveform HUD theme palette switching and global speech speed configuration."""
+    from desktop.ui.hud import WaveformHud, THEME_PALETTES
+    from desktop.audio.tts import set_speech_speed, get_speech_speed
+
+    hud = WaveformHud(theme="cyberpunk")
+    assert hud.theme == "cyberpunk"
+
+    # Switch across all supported themes
+    for t in ("matrix", "sunset", "violet", "ice"):
+        hud.set_theme(t)
+        assert hud.theme == t
+        assert t in THEME_PALETTES
+
+    # Invalid theme should be ignored
+    hud.set_theme("non_existent_theme")
+    assert hud.theme == "ice"
+
+    # Speech speed settings
+    set_speech_speed(1.25)
+    assert abs(get_speech_speed() - 1.25) < 0.001
+    set_speech_speed(0.1)  # clamped to 0.5
+    assert abs(get_speech_speed() - 0.5) < 0.001
+    set_speech_speed(3.0)  # clamped to 2.5
+    assert abs(get_speech_speed() - 2.5) < 0.001
+    set_speech_speed(1.0)  # reset to default
+    assert abs(get_speech_speed() - 1.0) < 0.001
+
+def test_tray_header_text_states(monkeypatch):
+    """Verify dynamic tray header text updates across muted, speaking, paused, and active states."""
+    import desktop.app as app_module
+    from desktop.app import SpeechQueueItem
+
+    class DummyApp:
+        def __init__(self):
+            self.muted = False
+            self.current_speech_item = None
+
+    app = DummyApp()
+
+    # 1. Active & Listening
+    monkeypatch.setattr(app_module, "is_speaking", lambda: False)
+    monkeypatch.setattr(app_module, "is_paused", lambda: False)
+    hdr = app_module.AntiTrayApp._get_tray_header_text(app)
+    assert "Active & Listening" in hdr
+    assert "🟢" in hdr
+
+    # 2. Speaking with chat tag
+    app.current_speech_item = SpeechQueueItem("Hello", filepath=r"C:\test\brain\32caa6ee-0000\log.jsonl")
+    monkeypatch.setattr(app_module, "is_speaking", lambda: True)
+    hdr_spk = app_module.AntiTrayApp._get_tray_header_text(app)
+    assert "Speaking [32ca]" in hdr_spk
+    assert "🔊" in hdr_spk
+
+    # 3. Paused
+    monkeypatch.setattr(app_module, "is_speaking", lambda: False)
+    monkeypatch.setattr(app_module, "is_paused", lambda: True)
+    hdr_pause = app_module.AntiTrayApp._get_tray_header_text(app)
+    assert "Speech Paused" in hdr_pause
+    assert "⏸️" in hdr_pause
+
+    # 4. Muted takes priority over other states
+    app.muted = True
+    hdr_muted = app_module.AntiTrayApp._get_tray_header_text(app)
+    assert "Muted" in hdr_muted
+    assert "🔴" in hdr_muted
+
+
 
 
 

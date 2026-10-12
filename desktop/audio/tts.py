@@ -243,15 +243,26 @@ def get_kokoro() -> Optional[Any]:
 def is_kokoro_available() -> bool:
     """Returns True if Kokoro-ONNX and its model weights are available."""
     m_path, v_path = _resolve_kokoro_model_paths()
-    return bool(m_path and v_path)
+DEFAULT_SPEED = 1.0
 
-def synth_kokoro_pcm(text: str, voice: str = DEFAULT_VOICE, speed: float = 1.0) -> np.ndarray:
+def set_speech_speed(speed: float):
+    """Sets global speech playback speed multiplier (0.5 to 2.5)."""
+    global DEFAULT_SPEED
+    DEFAULT_SPEED = max(0.5, min(2.5, float(speed)))
+
+def get_speech_speed() -> float:
+    """Returns global speech playback speed multiplier."""
+    return DEFAULT_SPEED
+
+def synth_kokoro_pcm(text: str, voice: str = DEFAULT_VOICE, speed: float = None) -> np.ndarray:
     """
     Synthesizes speech using Kokoro-ONNX local neural model.
     Outputs 48,000 Hz Stereo float32 PCM matching Arctis Nova Pro / soundcard DAC.
     """
     if not text or not text.strip():
         return np.empty((0, 2), dtype=np.float32)
+    if speed is None:
+        speed = DEFAULT_SPEED
     kokoro = get_kokoro()
     if kokoro is None:
         return np.empty((0, 2), dtype=np.float32)
@@ -361,6 +372,7 @@ async def speak_async(
     voice: str = DEFAULT_VOICE, 
     rate: str = "+0%", 
     pitch: str = "+0Hz",
+    speed: Optional[float] = None,
     on_start: Optional[Callable] = None,
     on_level: Optional[Callable[[float], None]] = None,
     on_finish: Optional[Callable] = None
@@ -374,6 +386,8 @@ async def speak_async(
     """
     if not text or not text.strip():
         return
+
+    effective_speed = speed if speed is not None else DEFAULT_SPEED
 
     chapters = extract_chapters_from_text(text)
     try:
@@ -402,7 +416,7 @@ async def speak_async(
             if len(chapters) > 1 and hasattr(global_player, "append_pcm"):
                 # Streaming chapter synthesis: Chapter 1 first for sub-1s Time-To-First-Audio (TTFA)
                 norm_c1 = normalize_phonetics(chapters[0][1])
-                c1_pcm = synth_kokoro_pcm(norm_c1, voice=voice)
+                c1_pcm = synth_kokoro_pcm(norm_c1, voice=voice, speed=effective_speed)
                 if len(c1_pcm) > 0:
                     global_player.play_pcm(
                         c1_pcm,
@@ -418,7 +432,7 @@ async def speak_async(
                         if hasattr(global_player, "is_active") and not global_player.is_active:
                             break
                         norm_body = normalize_phonetics(chapters[i][1])
-                        c_pcm = synth_kokoro_pcm(norm_body, voice=voice)
+                        c_pcm = synth_kokoro_pcm(norm_body, voice=voice, speed=effective_speed)
                         if len(c_pcm) > 0:
                             global_player.append_pcm(c_pcm, chapter_title=chapters[i][0], pause_sec=0.25)
                     global_player.set_stream_complete(True)
@@ -430,7 +444,7 @@ async def speak_async(
                 titles = []
                 for title, body in chapters:
                     norm_body = normalize_phonetics(body)
-                    c_pcm = synth_kokoro_pcm(norm_body, voice=voice)
+                    c_pcm = synth_kokoro_pcm(norm_body, voice=voice, speed=effective_speed)
                     if len(c_pcm) > 0:
                         pcm_chunks.append(c_pcm)
                         titles.append(title)
@@ -459,7 +473,7 @@ async def speak_async(
                         global_player.wait()
                         return
             else:
-                c_pcm = synth_kokoro_pcm(clean_text, voice=voice)
+                c_pcm = synth_kokoro_pcm(clean_text, voice=voice, speed=effective_speed)
                 if len(c_pcm) > 0:
                     global_player.play_pcm(
                         c_pcm,
@@ -689,6 +703,7 @@ def speak(
     voice: str = DEFAULT_VOICE, 
     rate: str = "+0%", 
     pitch: str = "+0Hz",
+    speed: Optional[float] = None,
     on_start: Optional[Callable] = None,
     on_level: Optional[Callable[[float], None]] = None,
     on_finish: Optional[Callable] = None
@@ -700,6 +715,7 @@ def speak(
             voice=voice, 
             rate=rate, 
             pitch=pitch, 
+            speed=speed,
             on_start=on_start,
             on_level=on_level,
             on_finish=on_finish

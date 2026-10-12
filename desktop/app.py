@@ -153,7 +153,8 @@ try:
         speak, stop_speech, pause_speech, resume_speech, 
         toggle_pause, rewind_speech, fast_forward_speech,
         skip_to_next_chapter, repeat_last_chapter, get_chapter_info,
-        is_speaking, is_paused, is_speech_active, get_speech_player
+        is_speaking, is_paused, is_speech_active, get_speech_player,
+        set_speech_speed, get_speech_speed
     )
     from desktop.audio.read_aloud import TranscriptWatcher
 except ImportError:
@@ -164,7 +165,8 @@ except ImportError:
             speak, stop_speech, pause_speech, resume_speech, 
             toggle_pause, rewind_speech, fast_forward_speech,
             skip_to_next_chapter, repeat_last_chapter, get_chapter_info,
-            is_speaking, is_paused, is_speech_active, get_speech_player
+            is_speaking, is_paused, is_speech_active, get_speech_player,
+            set_speech_speed, get_speech_speed
         )
         from audio.read_aloud import TranscriptWatcher
     except ImportError:
@@ -185,6 +187,8 @@ except ImportError:
         is_paused = None
         is_speech_active = None
         get_speech_player = None
+        set_speech_speed = None
+        get_speech_speed = None
         TranscriptWatcher = None
 
 try:
@@ -728,15 +732,65 @@ class AntiTrayApp:
                     else:
                         self.set_tray_state("muted", "AudioMind: Microphone Muted")
 
+        self.speech_speed = 1.0
+        self.hud_theme = "cyberpunk"
+
         get_speech_player().on_state_change = _on_player_state
 
         # System Tray setup
         self.tray_icon = None
         self._setup_tray()
 
+    def _get_tray_header_text(self, item=None) -> str:
+        """Dynamic high-contrast bold header for the tray context menu."""
+        if self.muted:
+            return "🔴  AudioMind • Muted (Ctrl+Alt+M)"
+        if is_speaking():
+            tag = f" [{self.current_speech_item.chat_tag}]" if (self.current_speech_item and self.current_speech_item.chat_tag) else ""
+            return f"🔊  AudioMind • Speaking{tag}"
+        if is_paused():
+            return "⏸️  AudioMind • Speech Paused"
+        return "🟢  AudioMind • Active & Listening"
+
+    def show_status_toast(self, icon=None, item=None):
+        """Pops up the floating HUD with an immediate status readout."""
+        if self.hud_enabled:
+            status = "Mic Muted" if self.muted else "Listening for 'Hey Anti'"
+            state = "muted" if self.muted else "listening"
+            if is_speaking():
+                status = "Speaking"
+                state = "speaking"
+            self.hud.show(state=state, status=f"AudioMind • {status}")
+            threading.Thread(target=self._hide_hud_after_delay, args=(2.0,), daemon=True).start()
+
+    def set_hud_theme(self, theme: str, icon=None, item=None):
+        """Set HUD color theme with immediate live preview."""
+        self.hud_theme = theme
+        self.hud.set_theme(theme)
+        if self.hud_enabled:
+            theme_names = {
+                "cyberpunk": "Cyberpunk Neon",
+                "matrix": "Emerald Matrix",
+                "sunset": "Sunset Amber",
+                "violet": "Deep Space Violet",
+                "ice": "Ice White Stealth"
+            }
+            name = theme_names.get(theme, theme.title())
+            self.hud.show(state="speaking", status=f"Theme: {name}")
+            threading.Thread(target=self._hide_hud_after_delay, args=(1.5,), daemon=True).start()
+
+    def set_speech_speed(self, speed: float, icon=None, item=None):
+        """Set global neural speech playback rate with HUD confirmation."""
+        self.speech_speed = speed
+        if set_speech_speed:
+            set_speech_speed(speed)
+        if self.hud_enabled:
+            self.hud.show(state="speaking", status=f"Speed: {speed:.2f}x")
+            threading.Thread(target=self._hide_hud_after_delay, args=(1.5,), daemon=True).start()
+
     def _setup_tray(self):
         menu = pystray.Menu(
-            item(lambda it: f"🎙️  AudioMind • {'Muted' if self.muted else 'Active'}", None, enabled=False),
+            item(self._get_tray_header_text, self.show_status_toast, default=True),
             pystray.Menu.SEPARATOR,
             item("💬  Auto-Submit Voice to Chat", self.toggle_auto_submit, checked=lambda item: self.auto_submit),
             item("🔊  Auto-Read Assistant Responses", self.toggle_auto_read, checked=lambda item: self.auto_read),
@@ -751,8 +805,21 @@ class AntiTrayApp:
             item("🔁  Replay Last Response", self.replay_last_response),
             item("📖  Read Highlighted Text  (Ctrl+Alt+R)", self.read_highlighted_text),
             pystray.Menu.SEPARATOR,
+            item("🎨  HUD Color Theme", pystray.Menu(
+                item("Cyberpunk Neon (Default)", lambda: self.set_hud_theme("cyberpunk"), checked=lambda it: self.hud.theme == "cyberpunk"),
+                item("Emerald Matrix", lambda: self.set_hud_theme("matrix"), checked=lambda it: self.hud.theme == "matrix"),
+                item("Sunset Amber", lambda: self.set_hud_theme("sunset"), checked=lambda it: self.hud.theme == "sunset"),
+                item("Deep Space Violet", lambda: self.set_hud_theme("violet"), checked=lambda it: self.hud.theme == "violet"),
+                item("Ice White Stealth", lambda: self.set_hud_theme("ice"), checked=lambda it: self.hud.theme == "ice"),
+            )),
+            item("⚡  Speech Speed", pystray.Menu(
+                item("1.0x  Normal", lambda: self.set_speech_speed(1.0), checked=lambda it: self.speech_speed == 1.0),
+                item("1.15x Brisk", lambda: self.set_speech_speed(1.15), checked=lambda it: self.speech_speed == 1.15),
+                item("1.25x Fast", lambda: self.set_speech_speed(1.25), checked=lambda it: self.speech_speed == 1.25),
+                item("1.4x  Rapid", lambda: self.set_speech_speed(1.4), checked=lambda it: self.speech_speed == 1.4),
+            )),
             item("🔇  Mute Microphone  (Ctrl+Alt+M)", self.toggle_mute, checked=lambda item: self.muted),
-            item("🌊  Desktop Waveform HUD", self.toggle_hud, checked=lambda item: self.hud_enabled, default=True),
+            item("🌊  Desktop Waveform HUD", self.toggle_hud, checked=lambda item: self.hud_enabled),
             item("📌  Dock Waveform to Bottom-Right", self.toggle_hud_dock, checked=lambda item: self.hud.position == "bottom_right"),
             item("📱  Remote Assistant Dispatch Listener", self.toggle_remote_listener, checked=lambda item: self.remote_poll_enabled),
             pystray.Menu.SEPARATOR,
