@@ -64,6 +64,8 @@ captures/
 *.npy
 desktop/resources/cache/
 voice_harness/resources/cache/
+desktop/resources/models/kokoro*
+desktop/resources/models/voices*
 
 # OS Artifacts
 .DS_Store

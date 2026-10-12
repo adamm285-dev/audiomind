@@ -7,9 +7,12 @@ Features interactive seekable playback, pause, resume, and 5s/10s rewind.
 import os
 import re
 import asyncio
+import time
+import threading
 import sys
 import subprocess
-from typing import Optional, Callable
+import shutil
+from typing import Optional, Callable, Any
 import numpy as np
 import edge_tts
 
@@ -22,17 +25,51 @@ except ImportError:
         global_player = None
         SpeechPlayer = None
 
-# Ultra-realistic, expressive conversational neural voices
-import shutil
-
-VOICE_PROFILES = {
-    "ava": "en-US-AvaNeural",                  # Modern, expressive, warm & natural (pure English, zero language-flipping)
-    "emma": "en-US-EmmaNeural",                # Friendly, clear, articulate
-    "andrew": "en-US-AndrewNeural",            # Conversational, natural male tone
-    "brian": "en-US-BrianNeural",              # Crisp, balanced tone
+# High-fidelity Kokoro & Edge conversational neural voices
+KOKORO_VOICES = {
+    "heart": "af_heart",        # Warm, natural, expressive female (default)
+    "bella": "af_bella",        # Clear, friendly, articulate female
+    "nicole": "af_nicole",      # Relaxed, casual female
+    "sarah": "af_sarah",        # Crisp, professional female
+    "adam": "am_adam",          # Conversational, natural male
+    "michael": "am_michael",    # Deep, warm male
+    "emma": "bf_emma",          # Expressive British female
+    "george": "bm_george",      # Clear British male
 }
 
-DEFAULT_VOICE = VOICE_PROFILES["ava"]
+VOICE_PROFILES = {
+    # Kokoro voice aliases
+    "heart": "af_heart",
+    "bella": "af_bella",
+    "nicole": "af_nicole",
+    "sarah": "af_sarah",
+    "adam": "am_adam",
+    "michael": "am_michael",
+    "emma": "bf_emma",
+    "george": "bm_george",
+    # Backward compatible aliases
+    "ava": "af_heart",
+    "andrew": "am_adam",
+    "brian": "bm_george",
+}
+
+EDGE_VOICE_MAP = {
+    "af_heart": "en-US-AvaNeural",
+    "heart": "en-US-AvaNeural",
+    "ava": "en-US-AvaNeural",
+    "af_bella": "en-US-EmmaNeural",
+    "bella": "en-US-EmmaNeural",
+    "emma": "en-US-EmmaNeural",
+    "bf_emma": "en-GB-SoniaNeural",
+    "am_adam": "en-US-AndrewNeural",
+    "adam": "en-US-AndrewNeural",
+    "andrew": "en-US-AndrewNeural",
+    "bm_george": "en-US-BrianNeural",
+    "george": "en-US-BrianNeural",
+    "brian": "en-US-BrianNeural",
+}
+
+DEFAULT_VOICE = VOICE_PROFILES["heart"]
 FFMPEG_PATH = shutil.which("ffmpeg") or os.environ.get("FFMPEG_PATH") or (r"C:\ffmpeg\bin\ffmpeg.exe" if os.path.exists(r"C:\ffmpeg\bin\ffmpeg.exe") else "ffmpeg")
 
 def normalize_phonetics(text: str) -> str:
@@ -166,6 +203,86 @@ def extract_chapters_from_text(raw_text: str) -> list[tuple[str, str]]:
 _EDGE_TTS_HEALTHY = True
 _EDGE_TTS_LAST_FAILURE = 0.0
 
+_kokoro_instance = None
+_kokoro_lock = threading.Lock()
+
+def _resolve_kokoro_model_paths() -> tuple[Optional[str], Optional[str]]:
+    """Locate Kokoro ONNX model and voice embeddings file across known directories."""
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    candidates = [
+        os.path.join(base_dir, "resources", "models"),
+        os.path.join(os.path.expanduser("~"), ".cache", "audiomind", "models"),
+        r"H:\Downloads\anti-voice-assistant\desktop\resources\models",
+        r"H:\Downloads\audiomind\desktop\resources\models",
+    ]
+    for d in candidates:
+        if not d or not os.path.isdir(d):
+            continue
+        m = os.path.join(d, "kokoro-v1.0.onnx")
+        v = os.path.join(d, "voices-v1.0.bin")
+        if os.path.exists(m) and os.path.exists(v):
+            return m, v
+    return None, None
+
+def get_kokoro() -> Optional[Any]:
+    """Returns the singleton Kokoro neural TTS instance, or None if unavailable."""
+    global _kokoro_instance
+    with _kokoro_lock:
+        if _kokoro_instance is not None:
+            return _kokoro_instance
+        try:
+            from kokoro_onnx import Kokoro
+            m_path, v_path = _resolve_kokoro_model_paths()
+            if m_path and v_path:
+                _kokoro_instance = Kokoro(m_path, v_path)
+                return _kokoro_instance
+        except Exception as e:
+            print(f"[!] Kokoro initialization failed: {e}")
+    return None
+
+def is_kokoro_available() -> bool:
+    """Returns True if Kokoro-ONNX and its model weights are available."""
+    m_path, v_path = _resolve_kokoro_model_paths()
+    return bool(m_path and v_path)
+
+def synth_kokoro_pcm(text: str, voice: str = DEFAULT_VOICE, speed: float = 1.0) -> np.ndarray:
+    """
+    Synthesizes speech using Kokoro-ONNX local neural model.
+    Outputs 48,000 Hz Stereo float32 PCM matching Arctis Nova Pro / soundcard DAC.
+    """
+    if not text or not text.strip():
+        return np.empty((0, 2), dtype=np.float32)
+    kokoro = get_kokoro()
+    if kokoro is None:
+        return np.empty((0, 2), dtype=np.float32)
+    try:
+        import scipy.signal
+        v_key = VOICE_PROFILES.get(voice.lower(), voice)
+        try:
+            available = kokoro.get_voices()
+            if v_key not in available:
+                v_key = "af_heart"
+        except Exception:
+            v_key = "af_heart"
+
+        samples, sr = kokoro.create(text, voice=v_key, speed=speed)
+        if samples is None or len(samples) == 0:
+            return np.empty((0, 2), dtype=np.float32)
+
+        # Resample to 48kHz stereo float32
+        if sr == 24000:
+            samples_48k = scipy.signal.resample_poly(samples, 2, 1)
+        elif sr != 48000:
+            samples_48k = scipy.signal.resample(samples, int(len(samples) * 48000 / sr))
+        else:
+            samples_48k = samples
+
+        stereo = np.column_stack((samples_48k, samples_48k)).astype(np.float32)
+        return stereo
+    except Exception as e:
+        print(f"[!] Kokoro synthesis error: {e}")
+        return np.empty((0, 2), dtype=np.float32)
+
 def synth_sapi_pcm(text: str, samplerate: int = 48000) -> np.ndarray:
     """
     Offline local Windows TTS fallback via SAPI.SpVoice and SpMemoryStream.
@@ -231,7 +348,7 @@ async def _synth_one(c_text: str, voice: str = DEFAULT_VOICE, rate: str = "+0%",
             if "403" in err_str or "Invalid response status" in err_str:
                 _EDGE_TTS_HEALTHY = False
                 _EDGE_TTS_LAST_FAILURE = time.time()
-                print(f"[!] Edge-TTS service returned 403 Forbidden. Tripping circuit breaker to local SAPI.")
+                print(f"[!] Edge-TTS service returned 403 Forbidden. Tripping circuit breaker.")
                 return b""
             if attempt == 0:
                 await asyncio.sleep(0.3)
@@ -248,7 +365,13 @@ async def speak_async(
     on_level: Optional[Callable[[float], None]] = None,
     on_finish: Optional[Callable] = None
 ):
-    """Synthesize text and stream directly to 48kHz stereo audio device with seek, pause, and chapter support."""
+    """
+    Synthesize text and stream directly to 48kHz stereo audio device with seek, pause, and chapter support.
+    Tiered Synthesis Architecture:
+      Tier 1: Kokoro-ONNX Local Neural Engine (100% offline, 48kHz stereo, warm human-grade voice)
+      Tier 2: Edge-TTS Cloud Neural Engine (Ava/Emma, if network unblocked)
+      Tier 3: Windows SAPI Offline Engine (Emergency failsafe)
+    """
     if not text or not text.strip():
         return
 
@@ -272,16 +395,64 @@ async def speak_async(
     clean_text = clean_markdown_for_speech(text)
     clean_text = normalize_phonetics(clean_text)
 
-    # 1. Multi-chapter parallel synthesis with Edge-TTS (if healthy)
+    # 1. Tier 1: Kokoro Local Neural TTS (Primary — pristine human voice, offline, 403-immune)
+    kokoro = get_kokoro()
+    if kokoro is not None:
+        try:
+            pcm_chunks = []
+            titles = []
+            if len(chapters) > 1:
+                for title, body in chapters:
+                    norm_body = normalize_phonetics(body)
+                    c_pcm = synth_kokoro_pcm(norm_body, voice=voice)
+                    if len(c_pcm) > 0:
+                        pcm_chunks.append(c_pcm)
+                        titles.append(title)
+            else:
+                c_pcm = synth_kokoro_pcm(clean_text, voice=voice)
+                if len(c_pcm) > 0:
+                    pcm_chunks.append(c_pcm)
+                    titles.append(chapters[0][0] if chapters else "Overview")
+
+            if pcm_chunks:
+                silence = np.zeros((int(0.25 * 48000), 2), dtype=np.float32)
+                combined = []
+                markers = []
+                curr_s = 0
+                for i, pcm in enumerate(pcm_chunks):
+                    markers.append(curr_s)
+                    combined.append(pcm)
+                    curr_s += len(pcm)
+                    if i < len(pcm_chunks) - 1:
+                        combined.append(silence)
+                        curr_s += len(silence)
+
+                if combined:
+                    audio_f32 = np.concatenate(combined)
+                    global_player.play_pcm(
+                        audio_f32,
+                        chapter_markers=markers,
+                        chapter_titles=titles,
+                        on_start=on_start,
+                        on_level=on_level,
+                        on_finish=on_finish
+                    )
+                    global_player.wait()
+                    return
+        except Exception as e:
+            print(f"[!] Kokoro speech synthesis failed, falling back to secondary tier: {e}")
+
+    # 2. Tier 2: Edge-TTS Cloud Neural Synthesis (if healthy)
     global _EDGE_TTS_HEALTHY, _EDGE_TTS_LAST_FAILURE
     use_edge = _EDGE_TTS_HEALTHY or (time.time() - _EDGE_TTS_LAST_FAILURE >= 300)
+    edge_voice = EDGE_VOICE_MAP.get(voice, EDGE_VOICE_MAP.get(DEFAULT_VOICE, "en-US-AvaNeural"))
 
     if use_edge and len(chapters) > 1:
         try:
             sem = asyncio.Semaphore(3)
             async def _synth_with_sem(c_text: str) -> bytes:
                 async with sem:
-                    return await _synth_one(c_text, voice=voice, rate=rate, pitch=pitch)
+                    return await _synth_one(c_text, voice=edge_voice, rate=rate, pitch=pitch)
 
             tasks = [_synth_with_sem(c[1]) for c in chapters]
             mp3_list = await asyncio.gather(*tasks)
@@ -332,10 +503,10 @@ async def speak_async(
         except Exception as e:
             print(f"[!] Parallel Edge-TTS chapter synthesis skipped/failed: {e}")
 
-    # 2. Single-chapter Edge-TTS synthesis (if healthy)
+    # Single-chapter Edge-TTS synthesis (if healthy)
     if use_edge and _EDGE_TTS_HEALTHY:
         try:
-            mp3_data = await _synth_one(clean_text, voice=voice, rate=rate, pitch=pitch)
+            mp3_data = await _synth_one(clean_text, voice=edge_voice, rate=rate, pitch=pitch)
             if mp3_data:
                 audio_f32 = decode_mp3_to_pcm(mp3_data)
                 global_player.play_pcm(
@@ -351,7 +522,7 @@ async def speak_async(
         except Exception as e:
             print(f"[!] Edge-TTS single pass synthesis failed: {e}")
 
-    # 3. Local Windows SAPI Offline Fallback (Immediate, Fail-Safe, 403-Immune)
+    # 3. Tier 3: Local Windows SAPI Offline Fallback (Immediate, Fail-Safe, 403-Immune)
     print("[!] Seamlessly using local Windows SAPI speech engine (offline fail-safe).")
     if len(chapters) > 1:
         pcm_chunks = []

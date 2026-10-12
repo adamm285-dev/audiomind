@@ -278,6 +278,7 @@ def test_chapter_synthesis_index_alignment_and_spoken_notice(monkeypatch):
         def wait(self):
             pass
 
+    monkeypatch.setattr(tts_module, "get_kokoro", lambda: None)
     monkeypatch.setattr(tts_module, "_synth_one", mock_synth_one)
     monkeypatch.setattr(tts_module, "decode_mp3_to_pcm", mock_decode)
     monkeypatch.setattr(tts_module, "global_player", MockPlayer())
@@ -381,6 +382,7 @@ def test_tts_sapi_fallback_when_edge_tts_fails(monkeypatch):
         def wait(self):
             pass
 
+    monkeypatch.setattr(tts_module, "get_kokoro", lambda: None)
     monkeypatch.setattr(tts_module, "_synth_one", failing_synth_one)
     monkeypatch.setattr(tts_module, "synth_sapi_pcm", mock_sapi_pcm)
     monkeypatch.setattr(tts_module, "global_player", MockPlayer())
@@ -391,6 +393,47 @@ def test_tts_sapi_fallback_when_edge_tts_fails(monkeypatch):
     assert len(sapi_called) >= 1
     assert len(played_pcm) == 1
     assert played_pcm[0].shape == (24000, 2)
+
+def test_kokoro_tiered_synthesis_and_chapter_alignment(monkeypatch):
+    """Verify that speak_async prioritizes Kokoro local neural TTS with chapter alignment."""
+    import asyncio
+    import numpy as np
+    import desktop.audio.tts as tts_module
+
+    text = (
+        "## Setup\nFirst step here.\n\n"
+        "## Run\nSecond step here."
+    )
+
+    kokoro_calls = []
+    def mock_synth_kokoro(t, voice=None, speed=1.0):
+        kokoro_calls.append(t)
+        return np.ones((24000, 2), dtype=np.float32) * 0.4
+
+    played_pcm = []
+    played_kwargs = {}
+    class MockPlayer:
+        def play_pcm(self, audio_f32, chapter_markers=None, chapter_titles=None, **kwargs):
+            played_pcm.append(audio_f32)
+            played_kwargs["markers"] = chapter_markers
+            played_kwargs["titles"] = chapter_titles
+        def wait(self):
+            pass
+
+    class DummyKokoro:
+        def get_voices(self):
+            return ["af_heart"]
+
+    monkeypatch.setattr(tts_module, "get_kokoro", lambda: DummyKokoro())
+    monkeypatch.setattr(tts_module, "synth_kokoro_pcm", mock_synth_kokoro)
+    monkeypatch.setattr(tts_module, "global_player", MockPlayer())
+
+    asyncio.run(tts_module.speak_async(text))
+
+    assert len(kokoro_calls) == 2
+    assert len(played_pcm) == 1
+    assert played_kwargs["titles"] == ["Setup", "Run"]
+    assert len(played_kwargs["markers"]) == 2
 
 
 

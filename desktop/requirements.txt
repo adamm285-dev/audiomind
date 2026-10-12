@@ -12,3 +12,5 @@ pywin32==306
 pyperclip==1.9.0
 python-dotenv==1.0.1
 pytest==8.3.3
+kokoro-onnx>=0.6.0
+scipy>=1.14.0
