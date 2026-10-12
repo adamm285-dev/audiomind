@@ -124,6 +124,7 @@
 - `AGENTS.md`
 - `LICENSE`
 - `MOCKS.md`
+- `NOTEBOOKLM_BRIEF.md`
 - `README.md`
 - `SECURITY.md`
 - `decisions.md`
