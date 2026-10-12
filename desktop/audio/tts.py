@@ -157,7 +157,7 @@ def extract_chapters_from_text(raw_text: str) -> list[tuple[str, str]]:
             if body:
                 chapters.append((h_title or f"Chapter {len(chapters)+1}", body))
         if len(chapters) > 1:
-            return chapters[:6]
+            return chapters
 
     # 2. Numbered item splitting (1. ... 2. ...)
     numbered_pattern = r'(?:^|\n)(?=(?:\d+\.|\bItem\s+\d+:?)\s+)'
@@ -171,7 +171,7 @@ def extract_chapters_from_text(raw_text: str) -> list[tuple[str, str]]:
             title = re.sub(r'^[#*\-\d.\s\U00010000-\U0010ffff\u2600-\u27bf]+\s*', '', t_clean)[:40].strip()
             chapters.append((title or f"Point {i+1}", p))
         if len(chapters) > 1:
-            return chapters[:6]
+            return chapters
 
     # 3. Paragraph-based splitting (\n\n+)
     paragraphs = [p.strip() for p in re.split(r'\n{2,}', text) if p.strip()]
@@ -201,7 +201,7 @@ def extract_chapters_from_text(raw_text: str) -> list[tuple[str, str]]:
             title = re.sub(r'^[#*\-\d.\s\U00010000-\U0010ffff\u2600-\u27bf]+\s*', '', t_clean)[:40].strip()
             chapters.append((title or f"Section {len(chapters)+1}", c_text))
         if len(chapters) > 1:
-            return chapters[:6]
+            return chapters
 
     # 4. Long continuous text fallback: chunk by sentences (~50-80 words each)
     words = text.split()
@@ -233,7 +233,7 @@ def extract_chapters_from_text(raw_text: str) -> list[tuple[str, str]]:
                 title = re.sub(r'^[#*\-\d.\s\U00010000-\U0010ffff\u2600-\u27bf]+\s*', '', t_clean)[:40].strip()
                 chapters.append((title or f"Part {len(chapters)+1}", c_text))
             if len(chapters) > 1:
-                return chapters[:8]
+                return chapters
 
     return [("Overview", text)]
 

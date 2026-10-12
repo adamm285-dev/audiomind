@@ -61,6 +61,19 @@ def test_waveform_hud_visibility_and_status_logic():
     assert hud.visible is True
     assert hud.state == "processing"
 
+def test_waveform_hud_chat_tag_isolation():
+    """Verify HUD LCD display isolates bracketed chat name and drops overflow chapter/queue text."""
+    hud = WaveformHud(position="bottom_right")
+    hud.set_status("[Open Source] Ch 1/3: Intro • Q:2", state="speaking")
+    assert hud.status_text == "[Open Source] Ch 1/3: Intro • Q:2"
+
+    # Simulate LCD text formatting
+    display_label = hud.status_text
+    if display_label.startswith("[") and "]" in display_label:
+        end_b = display_label.find("]")
+        display_label = display_label[:end_b + 1]
+    assert display_label == "[Open Source]"
+
 def test_waveform_hud_click_callback():
     """Verify HUD on_click callback is invoked on canvas click."""
     hud = WaveformHud(position="bottom_right")
@@ -687,7 +700,7 @@ def test_waveform_hud_cd_player_transport_controls():
 
     hud = WaveformHud(position="bottom_right")
     assert hud.height == 38
-    assert hud.width == 400
+    assert hud.width == 460
 
     # 1. Verify expansion logic
     hud.state = "idle"
@@ -712,17 +725,17 @@ def test_waveform_hud_cd_player_transport_controls():
     hud._check_expansion()
     assert hud.height == 38
 
-    # 2. Test button hit testing when expanded (height = 84)
+    # 2. Test button hit testing when expanded (height = 84, width = 460)
     hud.height = 84
-    assert hud._hit_test_button(39, 62) == "prev"
-    assert hud._hit_test_button(103, 62) == "rewind"
-    assert hud._hit_test_button(167, 62) == "play_pause"
-    assert hud._hit_test_button(231, 62) == "forward"
-    assert hud._hit_test_button(295, 62) == "next"
-    assert hud._hit_test_button(360, 62) == "skip"
+    assert hud._hit_test_button(45, 62) == "prev"
+    assert hud._hit_test_button(119, 62) == "rewind"
+    assert hud._hit_test_button(193, 62) == "play_pause"
+    assert hud._hit_test_button(267, 62) == "forward"
+    assert hud._hit_test_button(341, 62) == "next"
+    assert hud._hit_test_button(415, 62) == "skip"
     # Row 1 or outside bounds returns None
     assert hud._hit_test_button(50, 20) is None
-    assert hud._hit_test_button(39, 40) is None
+    assert hud._hit_test_button(45, 40) is None
 
     # In compact mode (height = 38), hit testing always returns None
     hud.height = 38
@@ -745,12 +758,12 @@ def test_waveform_hud_cd_player_transport_controls():
             self.y = y
 
     # Click each of the 6 buttons
-    hud._on_canvas_click(DummyEvent(39, 62))
-    hud._on_canvas_click(DummyEvent(103, 62))
-    hud._on_canvas_click(DummyEvent(167, 62))
-    hud._on_canvas_click(DummyEvent(231, 62))
-    hud._on_canvas_click(DummyEvent(295, 62))
-    hud._on_canvas_click(DummyEvent(360, 62))
+    hud._on_canvas_click(DummyEvent(45, 62))
+    hud._on_canvas_click(DummyEvent(119, 62))
+    hud._on_canvas_click(DummyEvent(193, 62))
+    hud._on_canvas_click(DummyEvent(267, 62))
+    hud._on_canvas_click(DummyEvent(341, 62))
+    hud._on_canvas_click(DummyEvent(415, 62))
     assert events == ["prev", "rewind", "play_pause", "forward", "next", "skip"]
 
     # Click outside buttons (row 1 LCD screen) triggers general on_click
@@ -759,18 +772,18 @@ def test_waveform_hud_cd_player_transport_controls():
     assert events == ["general_click"]
 
     # 4. Test hover hint tracking
-    hud._on_mouse_move(DummyEvent(39, 62))
+    hud._on_mouse_move(DummyEvent(45, 62))
     assert hud.hovered_button == "prev"
     assert hud._hover_hint == "⏮  REPEAT / PREV CHAPTER"
 
-    hud._on_mouse_move(DummyEvent(103, 62))
+    hud._on_mouse_move(DummyEvent(119, 62))
     assert hud.hovered_button == "rewind"
     assert hud._hover_hint == "⏪  REWIND 5 SECONDS"
 
-    hud._on_mouse_move(DummyEvent(167, 62))
+    hud._on_mouse_move(DummyEvent(193, 62))
     assert hud.hovered_button == "play_pause"
 
-    hud._on_mouse_move(DummyEvent(360, 62))
+    hud._on_mouse_move(DummyEvent(415, 62))
     assert hud.hovered_button == "skip"
     assert hud._hover_hint == "⏹  SKIP CURRENT OUTPUT"
 

@@ -83,7 +83,7 @@ class WaveformHud:
         self.is_hovered = False
         self.hovered_button = None
         self._hover_hint = None
-        self.width = 400
+        self.width = 460
         self.height = 38
         self._thread = None
         self._lock = threading.Lock()
@@ -146,12 +146,12 @@ class WaveformHud:
         if not (46 <= y <= 78):
             return None
         btn_defs = [
-            ("prev", 10, 68),
-            ("rewind", 74, 132),
-            ("play_pause", 138, 196),
-            ("forward", 202, 260),
-            ("next", 266, 324),
-            ("skip", 330, 390),
+            ("prev", 12, 78),
+            ("rewind", 86, 152),
+            ("play_pause", 160, 226),
+            ("forward", 234, 300),
+            ("next", 308, 374),
+            ("skip", 382, 448),
         ]
         for btn_id, bx1, bx2 in btn_defs:
             if bx1 <= x <= bx2:
@@ -504,8 +504,13 @@ class WaveformHud:
                 if display_label in ("AudioMind", "AudioMind is online", "Anti", "Anti is online", ""):
                     display_label = default_status
 
-                if len(display_label) > 38:
-                    display_label = display_label[:37] + "…"
+                # Strip everything after bracketed chat name if present (e.g. "[Open Source] Ch 1/3: Intro • Q:2" -> "[Open Source]")
+                if display_label.startswith("[") and "]" in display_label:
+                    end_b = display_label.find("]")
+                    display_label = display_label[:end_b + 1]
+
+                if len(display_label) > 42:
+                    display_label = display_label[:41] + "…"
                 txt_fill = "#e6edf3"
 
             self.canvas.create_text(34, dot_y, text=display_label, fill=txt_fill, font=("Segoe UI", 9, "bold"), anchor="w")
@@ -567,12 +572,12 @@ class WaveformHud:
 
             # Deck 2: Physical CD-Player Transport Buttons
             btn_defs = [
-                ("prev", "⏮", 10, 68),
-                ("rewind", "⏪ 5s", 74, 132),
-                ("play_pause", "▶" if self.state == "paused" else "⏸", 138, 196),
-                ("forward", "⏩ 5s", 202, 260),
-                ("next", "⏭", 266, 324),
-                ("skip", "⏹ Skip", 330, 390),
+                ("prev", "⏮", 12, 78),
+                ("rewind", "⏪ 5s", 86, 152),
+                ("play_pause", "▶" if self.state == "paused" else "⏸", 160, 226),
+                ("forward", "⏩ 5s", 234, 300),
+                ("next", "⏭", 308, 374),
+                ("skip", "⏹ Skip", 382, 448),
             ]
 
             btn_y1 = 48
@@ -619,6 +624,10 @@ class WaveformHud:
 
             if display_label in ("AudioMind", "AudioMind is online", "Anti", "Anti is online", ""):
                 display_label = default_status
+
+            if display_label.startswith("[") and "]" in display_label:
+                end_b = display_label.find("]")
+                display_label = display_label[:end_b + 1]
 
             if len(display_label) > 42:
                 display_label = display_label[:41] + "…"
