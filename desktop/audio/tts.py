@@ -30,23 +30,34 @@ KOKORO_VOICES = {
     "heart": "af_heart",        # Warm, natural, expressive female (default)
     "bella": "af_bella",        # Clear, friendly, articulate female
     "nicole": "af_nicole",      # Relaxed, casual female
+    "sky": "af_sky",            # Breezy, upbeat female
     "sarah": "af_sarah",        # Crisp, professional female
     "adam": "am_adam",          # Conversational, natural male
     "michael": "am_michael",    # Deep, warm male
+    "echo": "am_echo",          # Smooth, mellow male
+    "onyx": "am_onyx",          # Resonant, authoritative male
     "emma": "bf_emma",          # Expressive British female
+    "isabella": "bf_isabella",  # Eloquent British female
     "george": "bm_george",      # Clear British male
+    "fable": "bm_fable",        # Expressive storyteller British male
 }
 
 VOICE_PROFILES = {
-    # Kokoro voice aliases
-    "heart": "af_heart",
-    "bella": "af_bella",
-    "nicole": "af_nicole",
-    "sarah": "af_sarah",
-    "adam": "am_adam",
-    "michael": "am_michael",
-    "emma": "bf_emma",
-    "george": "bm_george",
+    **KOKORO_VOICES,
+    # Direct IDs
+    "af_heart": "af_heart",
+    "af_bella": "af_bella",
+    "af_nicole": "af_nicole",
+    "af_sky": "af_sky",
+    "af_sarah": "af_sarah",
+    "am_adam": "am_adam",
+    "am_michael": "am_michael",
+    "am_echo": "am_echo",
+    "am_onyx": "am_onyx",
+    "bf_emma": "bf_emma",
+    "bf_isabella": "bf_isabella",
+    "bm_george": "bm_george",
+    "bm_fable": "bm_fable",
     # Backward compatible aliases
     "ava": "af_heart",
     "andrew": "am_adam",
@@ -59,17 +70,43 @@ EDGE_VOICE_MAP = {
     "ava": "en-US-AvaNeural",
     "af_bella": "en-US-EmmaNeural",
     "bella": "en-US-EmmaNeural",
-    "emma": "en-US-EmmaNeural",
+    "af_nicole": "en-US-JennyNeural",
+    "nicole": "en-US-JennyNeural",
+    "af_sky": "en-US-AnaNeural",
+    "sky": "en-US-AnaNeural",
+    "af_sarah": "en-US-AriaNeural",
+    "sarah": "en-US-AriaNeural",
+    "emma": "en-GB-SoniaNeural",
     "bf_emma": "en-GB-SoniaNeural",
+    "bf_isabella": "en-GB-LibbyNeural",
+    "isabella": "en-GB-LibbyNeural",
     "am_adam": "en-US-AndrewNeural",
     "adam": "en-US-AndrewNeural",
     "andrew": "en-US-AndrewNeural",
-    "bm_george": "en-US-BrianNeural",
-    "george": "en-US-BrianNeural",
-    "brian": "en-US-BrianNeural",
+    "am_michael": "en-US-ChristopherNeural",
+    "michael": "en-US-ChristopherNeural",
+    "am_echo": "en-US-GuyNeural",
+    "echo": "en-US-GuyNeural",
+    "am_onyx": "en-US-EricNeural",
+    "onyx": "en-US-EricNeural",
+    "bm_george": "en-GB-RyanNeural",
+    "george": "en-GB-RyanNeural",
+    "brian": "en-GB-RyanNeural",
+    "bm_fable": "en-GB-ThomasNeural",
+    "fable": "en-GB-ThomasNeural",
 }
 
 DEFAULT_VOICE = VOICE_PROFILES["heart"]
+
+def set_default_voice(voice: str):
+    """Sets global active neural voice profile."""
+    global DEFAULT_VOICE
+    v_clean = VOICE_PROFILES.get(voice.lower() if isinstance(voice, str) else "", voice)
+    DEFAULT_VOICE = v_clean
+
+def get_default_voice() -> str:
+    """Returns active neural voice profile key."""
+    return DEFAULT_VOICE
 FFMPEG_PATH = shutil.which("ffmpeg") or os.environ.get("FFMPEG_PATH") or (r"C:\ffmpeg\bin\ffmpeg.exe" if os.path.exists(r"C:\ffmpeg\bin\ffmpeg.exe") else "ffmpeg")
 
 def normalize_phonetics(text: str) -> str:

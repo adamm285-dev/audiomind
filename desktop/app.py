@@ -154,7 +154,7 @@ try:
         toggle_pause, rewind_speech, fast_forward_speech,
         skip_to_next_chapter, repeat_last_chapter, get_chapter_info,
         is_speaking, is_paused, is_speech_active, get_speech_player,
-        set_speech_speed, get_speech_speed
+        set_speech_speed, get_speech_speed, set_default_voice, get_default_voice
     )
     from desktop.audio.read_aloud import TranscriptWatcher
 except ImportError:
@@ -166,7 +166,7 @@ except ImportError:
             toggle_pause, rewind_speech, fast_forward_speech,
             skip_to_next_chapter, repeat_last_chapter, get_chapter_info,
             is_speaking, is_paused, is_speech_active, get_speech_player,
-            set_speech_speed, get_speech_speed
+            set_speech_speed, get_speech_speed, set_default_voice, get_default_voice
         )
         from audio.read_aloud import TranscriptWatcher
     except ImportError:
@@ -189,6 +189,8 @@ except ImportError:
         get_speech_player = None
         set_speech_speed = None
         get_speech_speed = None
+        set_default_voice = None
+        get_default_voice = lambda: "af_heart"
         TranscriptWatcher = None
 
 try:
@@ -625,6 +627,10 @@ class SpeechQueueItem:
 
     @staticmethod
     def _extract_chat_tag(filepath: Optional[str]) -> str:
+        """
+        Resolves human-readable chat title from Antigravity's local SQLite database.
+        Returns concise 2-word title, or empty string if absent (avoids cryptic hex hashes).
+        """
         if not filepath:
             return ""
         try:
@@ -633,8 +639,25 @@ class SpeechQueueItem:
                 b_idx = norm.index("brain")
                 if b_idx + 1 < len(norm):
                     raw_id = norm[b_idx + 1].strip()
-                    # Return first 4 chars of the conversation UUID
-                    return raw_id[:4].lower()
+                    # Query Antigravity's local SQLite database for the human chat title
+                    db_path = os.path.expanduser(r"~/.gemini/antigravity/conversation_summaries.db")
+                    if os.path.exists(db_path):
+                        try:
+                            import sqlite3
+                            uri = f"file:{db_path}?mode=ro"
+                            with sqlite3.connect(uri, uri=True, timeout=0.5) as conn:
+                                cur = conn.cursor()
+                                cur.execute("SELECT title FROM conversation_summaries WHERE conversation_id = ? LIMIT 1;", (raw_id,))
+                                row = cur.fetchone()
+                                if row and row[0]:
+                                    title = row[0].strip()
+                                    words = title.split()
+                                    short_title = " ".join(words[:2]) if len(words) > 2 else title
+                                    if len(short_title) > 14:
+                                        short_title = short_title[:13] + "…"
+                                    return short_title
+                        except Exception:
+                            pass
         except Exception:
             pass
         return ""
@@ -788,6 +811,22 @@ class AntiTrayApp:
             self.hud.show(state="speaking", status=f"Speed: {speed:.2f}x")
             threading.Thread(target=self._hide_hud_after_delay, args=(1.5,), daemon=True).start()
 
+    def set_voice_model(self, voice_id: str, voice_name: str, icon=None, item=None):
+        """Set active neural voice profile with instant voice sample."""
+        if set_default_voice:
+            set_default_voice(voice_id)
+        if self.hud_enabled:
+            self.hud.show(state="speaking", status=f"Voice: {voice_name}")
+            threading.Thread(target=self._hide_hud_after_delay, args=(2.0,), daemon=True).start()
+        # Play brief auditory confirmation in selected voice
+        def _preview():
+            try:
+                time.sleep(0.15)
+                speak(f"AudioMind voice set to {voice_name}.", voice=voice_id)
+            except Exception:
+                pass
+        threading.Thread(target=_preview, daemon=True).start()
+
     def _setup_tray(self):
         menu = pystray.Menu(
             item(self._get_tray_header_text, self.show_status_toast, default=True),
@@ -805,6 +844,23 @@ class AntiTrayApp:
             item("🔁  Replay Last Response", self.replay_last_response),
             item("📖  Read Highlighted Text  (Ctrl+Alt+R)", self.read_highlighted_text),
             pystray.Menu.SEPARATOR,
+            item("🗣️  Voice Selection", pystray.Menu(
+                item("Heart • Warm & Natural (Default)", lambda: self.set_voice_model("af_heart", "Heart"), checked=lambda it: get_default_voice() == "af_heart"),
+                item("Bella • Friendly & Melodic", lambda: self.set_voice_model("af_bella", "Bella"), checked=lambda it: get_default_voice() == "af_bella"),
+                item("Nicole • Relaxed & Casual", lambda: self.set_voice_model("af_nicole", "Nicole"), checked=lambda it: get_default_voice() == "af_nicole"),
+                item("Sky • Breezy & Upbeat", lambda: self.set_voice_model("af_sky", "Sky"), checked=lambda it: get_default_voice() == "af_sky"),
+                item("Sarah • Crisp & Professional", lambda: self.set_voice_model("af_sarah", "Sarah"), checked=lambda it: get_default_voice() == "af_sarah"),
+                pystray.Menu.SEPARATOR,
+                item("Adam • Natural & Conversational", lambda: self.set_voice_model("am_adam", "Adam"), checked=lambda it: get_default_voice() == "am_adam"),
+                item("Michael • Deep & Warm", lambda: self.set_voice_model("am_michael", "Michael"), checked=lambda it: get_default_voice() == "am_michael"),
+                item("Echo • Smooth & Mellow", lambda: self.set_voice_model("am_echo", "Echo"), checked=lambda it: get_default_voice() == "am_echo"),
+                item("Onyx • Resonant & Baritone", lambda: self.set_voice_model("am_onyx", "Onyx"), checked=lambda it: get_default_voice() == "am_onyx"),
+                pystray.Menu.SEPARATOR,
+                item("Emma • British Warm & Expressive", lambda: self.set_voice_model("bf_emma", "Emma"), checked=lambda it: get_default_voice() == "bf_emma"),
+                item("Isabella • British Eloquent", lambda: self.set_voice_model("bf_isabella", "Isabella"), checked=lambda it: get_default_voice() == "bf_isabella"),
+                item("George • British Classic BBC", lambda: self.set_voice_model("bm_george", "George"), checked=lambda it: get_default_voice() == "bm_george"),
+                item("Fable • British Narrative", lambda: self.set_voice_model("bm_fable", "Fable"), checked=lambda it: get_default_voice() == "bm_fable"),
+            )),
             item("🎨  HUD Color Theme", pystray.Menu(
                 item("Cyberpunk Neon (Default)", lambda: self.set_hud_theme("cyberpunk"), checked=lambda it: self.hud.theme == "cyberpunk"),
                 item("Emerald Matrix", lambda: self.set_hud_theme("matrix"), checked=lambda it: self.hud.theme == "matrix"),

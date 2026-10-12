@@ -436,20 +436,20 @@ def test_kokoro_tiered_synthesis_and_chapter_alignment(monkeypatch):
     assert len(played_kwargs["markers"]) == 2
 
 def test_speech_queue_item_chat_tag_extraction():
-    """Verify chat tag extraction from Windows and POSIX transcript filepaths."""
+    """Verify human chat title resolution and clean empty fallback (no cryptic hex)."""
     from desktop.app import SpeechQueueItem
 
-    # Windows style path
+    # Path with active database entry (resolves 'Open Source')
     p_win = r"C:\Users\test\.gemini\antigravity\brain\32caa6ee-c05c-409c-bf5b-a4db56b32632\.system_generated\logs\transcript.jsonl"
     item1 = SpeechQueueItem(text="Hello", filepath=p_win, step_index=10)
-    assert item1.chat_tag == "32ca"
+    assert item1.chat_tag in ("Open Source", "")
 
-    # POSIX style path
-    p_nix = "/home/user/.gemini/antigravity/brain/8b594321-abcd-ef01-2345/.system_generated/logs/transcript.jsonl"
+    # Non-existent ID -> cleanly falls back to empty string (no cryptic hex hash)
+    p_nix = "/home/user/.gemini/antigravity/brain/00000000-0000-0000-0000-000000000000/.system_generated/logs/transcript.jsonl"
     item2 = SpeechQueueItem(text="World", filepath=p_nix, step_index=15)
-    assert item2.chat_tag == "8b59"
+    assert item2.chat_tag == ""
 
-    # Missing or unrecognized path
+    # Missing or unrecognized path -> empty string
     item3 = SpeechQueueItem(text="Standalone", filepath=None)
     assert item3.chat_tag == ""
 
@@ -625,10 +625,11 @@ def test_tray_header_text_states(monkeypatch):
     assert "🟢" in hdr
 
     # 2. Speaking with chat tag
-    app.current_speech_item = SpeechQueueItem("Hello", filepath=r"C:\test\brain\32caa6ee-0000\log.jsonl")
+    app.current_speech_item = SpeechQueueItem("Hello")
+    app.current_speech_item.chat_tag = "Security Audit"
     monkeypatch.setattr(app_module, "is_speaking", lambda: True)
     hdr_spk = app_module.AntiTrayApp._get_tray_header_text(app)
-    assert "Speaking [32ca]" in hdr_spk
+    assert "Speaking [Security Audit]" in hdr_spk
     assert "🔊" in hdr_spk
 
     # 3. Paused
@@ -643,6 +644,22 @@ def test_tray_header_text_states(monkeypatch):
     hdr_muted = app_module.AntiTrayApp._get_tray_header_text(app)
     assert "Muted" in hdr_muted
     assert "🔴" in hdr_muted
+
+def test_voice_profiles_and_switching():
+    """Verify curated voice profiles and dynamic voice switching in tts module."""
+    from desktop.audio.tts import VOICE_PROFILES, set_default_voice, get_default_voice
+
+    assert "af_heart" in VOICE_PROFILES.values()
+    assert "am_adam" in VOICE_PROFILES.values()
+    assert "bf_emma" in VOICE_PROFILES.values()
+    assert "bm_george" in VOICE_PROFILES.values()
+
+    set_default_voice("am_adam")
+    assert get_default_voice() == "am_adam"
+
+    set_default_voice("heart")
+    assert get_default_voice() == "af_heart"
+
 
 
 
