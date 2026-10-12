@@ -666,50 +666,50 @@ def test_waveform_hud_cd_player_transport_controls():
     from desktop.ui.hud import WaveformHud
 
     hud = WaveformHud(position="bottom_right")
-    assert hud.height == 34
-    assert hud.width == 330
+    assert hud.height == 38
+    assert hud.width == 400
 
     # 1. Verify expansion logic
     hud.state = "idle"
     hud.is_hovered = False
     hud._check_expansion()
-    assert hud.height == 34
+    assert hud.height == 38
 
     hud.state = "speaking"
     hud._check_expansion()
-    assert hud.height == 60
+    assert hud.height == 84
 
     hud.state = "paused"
     hud._check_expansion()
-    assert hud.height == 60
+    assert hud.height == 84
 
     hud.state = "listening"
     hud.is_hovered = True
     hud._check_expansion()
-    assert hud.height == 60
+    assert hud.height == 84
 
     hud.is_hovered = False
     hud._check_expansion()
-    assert hud.height == 34
+    assert hud.height == 38
 
-    # 2. Test button hit testing when expanded (height = 60)
-    hud.height = 60
-    assert hud._hit_test_button(35, 44) == "prev"
-    assert hud._hit_test_button(87, 44) == "rewind"
-    assert hud._hit_test_button(139, 44) == "play_pause"
-    assert hud._hit_test_button(191, 44) == "forward"
-    assert hud._hit_test_button(243, 44) == "next"
-    assert hud._hit_test_button(295, 44) == "skip"
+    # 2. Test button hit testing when expanded (height = 84)
+    hud.height = 84
+    assert hud._hit_test_button(39, 62) == "prev"
+    assert hud._hit_test_button(103, 62) == "rewind"
+    assert hud._hit_test_button(167, 62) == "play_pause"
+    assert hud._hit_test_button(231, 62) == "forward"
+    assert hud._hit_test_button(295, 62) == "next"
+    assert hud._hit_test_button(360, 62) == "skip"
     # Row 1 or outside bounds returns None
-    assert hud._hit_test_button(50, 16) is None
-    assert hud._hit_test_button(35, 20) is None
+    assert hud._hit_test_button(50, 20) is None
+    assert hud._hit_test_button(39, 40) is None
 
-    # In compact mode (height = 34), hit testing always returns None
-    hud.height = 34
-    assert hud._hit_test_button(35, 44) is None
+    # In compact mode (height = 38), hit testing always returns None
+    hud.height = 38
+    assert hud._hit_test_button(39, 62) is None
 
     # 3. Test transport button callbacks
-    hud.height = 60
+    hud.height = 84
     events = []
     hud.on_prev_chapter = lambda: events.append("prev")
     hud.on_rewind_5 = lambda: events.append("rewind")
@@ -725,36 +725,36 @@ def test_waveform_hud_cd_player_transport_controls():
             self.y = y
 
     # Click each of the 6 buttons
-    hud._on_canvas_click(DummyEvent(35, 44))
-    hud._on_canvas_click(DummyEvent(87, 44))
-    hud._on_canvas_click(DummyEvent(139, 44))
-    hud._on_canvas_click(DummyEvent(191, 44))
-    hud._on_canvas_click(DummyEvent(243, 44))
-    hud._on_canvas_click(DummyEvent(295, 44))
+    hud._on_canvas_click(DummyEvent(39, 62))
+    hud._on_canvas_click(DummyEvent(103, 62))
+    hud._on_canvas_click(DummyEvent(167, 62))
+    hud._on_canvas_click(DummyEvent(231, 62))
+    hud._on_canvas_click(DummyEvent(295, 62))
+    hud._on_canvas_click(DummyEvent(360, 62))
     assert events == ["prev", "rewind", "play_pause", "forward", "next", "skip"]
 
-    # Click outside buttons (row 1) triggers general on_click
+    # Click outside buttons (row 1 LCD screen) triggers general on_click
     events.clear()
-    hud._on_canvas_click(DummyEvent(50, 16))
+    hud._on_canvas_click(DummyEvent(50, 20))
     assert events == ["general_click"]
 
     # 4. Test hover hint tracking
-    hud._on_mouse_move(DummyEvent(35, 44))
+    hud._on_mouse_move(DummyEvent(39, 62))
     assert hud.hovered_button == "prev"
-    assert hud._hover_hint == "⏮ Repeat Chapter"
+    assert hud._hover_hint == "⏮  REPEAT / PREV CHAPTER"
 
-    hud._on_mouse_move(DummyEvent(87, 44))
+    hud._on_mouse_move(DummyEvent(103, 62))
     assert hud.hovered_button == "rewind"
-    assert hud._hover_hint == "⏪ Rewind 5s"
+    assert hud._hover_hint == "⏪  REWIND 5 SECONDS"
 
-    hud._on_mouse_move(DummyEvent(139, 44))
+    hud._on_mouse_move(DummyEvent(167, 62))
     assert hud.hovered_button == "play_pause"
 
-    hud._on_mouse_move(DummyEvent(295, 44))
+    hud._on_mouse_move(DummyEvent(360, 62))
     assert hud.hovered_button == "skip"
-    assert hud._hover_hint == "⏹ Skip to Next Output"
+    assert hud._hover_hint == "⏹  SKIP CURRENT OUTPUT"
 
-    hud._on_mouse_move(DummyEvent(50, 16))
+    hud._on_mouse_move(DummyEvent(50, 20))
     assert hud.hovered_button is None
     assert hud._hover_hint is None
 

@@ -83,8 +83,8 @@ class WaveformHud:
         self.is_hovered = False
         self.hovered_button = None
         self._hover_hint = None
-        self.width = 330
-        self.height = 34
+        self.width = 400
+        self.height = 38
         self._thread = None
         self._lock = threading.Lock()
 
@@ -107,9 +107,9 @@ class WaveformHud:
         self.root.attributes("-topmost", True)
         self.root.attributes("-alpha", 0.0)  # Start hidden
 
-        # Expandable dimensions (330px width; 34px compact pill, 60px expanded CD player)
-        self.width = 330
-        self.height = 34
+        # Expandable dimensions (400px width; 38px compact pill, 84px expanded CD player console)
+        self.width = 400
+        self.height = 38
 
         # Configure transparent-capable canvas
         try:
@@ -141,17 +141,19 @@ class WaveformHud:
 
     def _hit_test_button(self, x, y):
         """Hit-test (x, y) coordinates against Row 2 CD-player transport buttons."""
-        if self.height < 50:
+        if self.height < 60:
             return None
-        if not (33 <= y <= 56):
+        if not (46 <= y <= 78):
             return None
-        btn_w = 46
-        spacing = 6
-        start_x = 12
-        btn_ids = ["prev", "rewind", "play_pause", "forward", "next", "skip"]
-        for i, btn_id in enumerate(btn_ids):
-            bx1 = start_x + i * (btn_w + spacing)
-            bx2 = bx1 + btn_w
+        btn_defs = [
+            ("prev", 10, 68),
+            ("rewind", 74, 132),
+            ("play_pause", 138, 196),
+            ("forward", 202, 260),
+            ("next", 266, 324),
+            ("skip", 330, 390),
+        ]
+        for btn_id, bx1, bx2 in btn_defs:
             if bx1 <= x <= bx2:
                 return btn_id
         return None
@@ -260,28 +262,28 @@ class WaveformHud:
         self._check_expansion()
 
     def _on_mouse_move(self, event=None):
-        if not event or self.height < 50:
+        if not event or self.height < 60:
             return
         btn = self._hit_test_button(event.x, event.y)
         if btn != self.hovered_button:
             self.hovered_button = btn
             if btn:
                 hints = {
-                    "prev": "⏮ Repeat Chapter",
-                    "rewind": "⏪ Rewind 5s",
-                    "play_pause": "▶ Resume Speech" if self.state == "paused" else "⏸ Pause Speech",
-                    "forward": "⏩ Forward 5s",
-                    "next": "⏭ Next Chapter",
-                    "skip": "⏹ Skip to Next Output",
+                    "prev": "⏮  REPEAT / PREV CHAPTER",
+                    "rewind": "⏪  REWIND 5 SECONDS",
+                    "play_pause": "▶  RESUME SPEECH" if self.state == "paused" else "⏸  PAUSE SPEECH",
+                    "forward": "⏩  FORWARD 5 SECONDS",
+                    "next": "⏭  NEXT CHAPTER",
+                    "skip": "⏹  SKIP CURRENT OUTPUT",
                 }
                 self._hover_hint = hints.get(btn)
             else:
                 self._hover_hint = None
 
     def _check_expansion(self):
-        """Expand height to 60px when speaking/paused or hovered, collapse to 34px otherwise."""
+        """Expand height to 84px when speaking/paused or hovered, collapse to 38px otherwise."""
         should_expand = self.is_hovered or (self.state in ("speaking", "paused"))
-        target_h = 60 if should_expand else 34
+        target_h = 84 if should_expand else 38
         if self.height != target_h:
             self.height = target_h
             if self.canvas:
@@ -467,23 +469,149 @@ class WaveformHud:
             dot_color = "#8b949e"
             default_status = "Ready"
 
-        bg = "#0c0e14"
+        bg = "#0c1017"
 
-        # 1. Sleek Capsule Pill / Rounded Card Background
-        r = 14 if h >= 50 else (h // 2)
-        self._draw_rounded_rect(1, 1, w - 1, h - 1, r, fill=bg, outline=glow_color, width=1)
+        # 1. Sleek Outer Chassis
+        r = 12 if h >= 60 else (h // 2)
+        chassis_outline = glow_color if (self.is_hovered or self.state == "speaking") else "#2c3545"
+        self._draw_rounded_rect(1, 1, w - 1, h - 1, r, fill=bg, outline=chassis_outline, width=1)
 
-        # 2. Glowing Indicator Dot (Left side)
-        dot_y = 16 if h >= 50 else (h / 2)
-        dot_x = 13
-        dot_r = 3.2
-        self.canvas.create_oval(dot_x - dot_r, dot_y - dot_r, dot_x + dot_r, dot_y + dot_r, fill=dot_color, outline="")
+        if h >= 60:
+            # === EXPANDED CD-PLAYER DOCK (h = 84) ===
+            # Deck 1: Recessed LCD Display Pocket
+            lcd_x1 = 10
+            lcd_y1 = 8
+            lcd_x2 = w - 10
+            lcd_y2 = 42
+            self._draw_rounded_rect(lcd_x1, lcd_y1, lcd_x2, lcd_y2, 6, fill="#06090e", outline="#1c2432", width=1)
 
-        # 3. Text Label (Streamlined, no redundant 'AudioMind •' prefix, fits chat tags + queue count)
-        if self._hover_hint:
-            display_label = self._hover_hint
-            txt_fill = glow_color
+            # LED Indicator Dot (inside LCD display)
+            dot_x = 21
+            dot_y = 25
+            dot_r = 3.5
+            self.canvas.create_oval(dot_x - dot_r, dot_y - dot_r, dot_x + dot_r, dot_y + dot_r, fill=dot_color, outline="")
+
+            # LCD Text Display
+            if self._hover_hint:
+                display_label = self._hover_hint
+                txt_fill = glow_color
+            else:
+                display_label = self.status_text
+                for prefix in ("AudioMind • ", "AudioMind: ", "Anti • ", "Anti: "):
+                    if display_label.startswith(prefix):
+                        display_label = display_label[len(prefix):].strip()
+
+                if display_label in ("AudioMind", "AudioMind is online", "Anti", "Anti is online", ""):
+                    display_label = default_status
+
+                if len(display_label) > 38:
+                    display_label = display_label[:37] + "…"
+                txt_fill = "#e6edf3"
+
+            self.canvas.create_text(34, dot_y, text=display_label, fill=txt_fill, font=("Segoe UI", 9, "bold"), anchor="w")
+
+            # Right side inside LCD screen: EQ Spectrum Analyzer or Status Icons
+            if self.state in ("processing", "thinking"):
+                num_dots = 3
+                dot_spacing = 9
+                start_dot_x = w - 44
+                for i in range(num_dots):
+                    pulse = (math.sin(self.phase * 3.6 - i * 0.9) + 1.0) / 2.0
+                    r = 1.8 + pulse * 1.6
+                    dot_fill = "#ffd600" if pulse > 0.4 else "#ff9100"
+                    dx = start_dot_x + i * dot_spacing
+                    self.canvas.create_oval(dx - r, dot_y - r, dx + r, dot_y + r, fill=dot_fill, outline="")
+            elif self.state == "paused":
+                # Two crisp paused vertical bars || in amber
+                pause_w = 3.0
+                pause_h = 13.0
+                p1_x = w - 34
+                p2_x = w - 26
+                self.canvas.create_line(p1_x, dot_y - pause_h/2, p1_x, dot_y + pause_h/2, fill="#ffd600", width=pause_w, capstyle="round")
+                self.canvas.create_line(p2_x, dot_y - pause_h/2, p2_x, dot_y + pause_h/2, fill="#ffd600", width=pause_w, capstyle="round")
+            else:
+                # 8 Digital EQ Spectrum Analyzer Bars inside LCD
+                num_bars = 8
+                bar_w = 2.5
+                spacing = 4.5
+                total_bars_w = num_bars * bar_w + (num_bars - 1) * spacing
+                start_x = w - total_bars_w - 20
+
+                with self._lock:
+                    target_level = self.audio_level
+
+                for i in range(num_bars):
+                    dist = abs(i - num_bars / 2) / (num_bars / 2)
+                    bell = math.exp(-2.0 * (dist ** 2))
+                    wave = math.sin(self.phase * 2.4 + i * 0.65) * 0.35 + 0.65
+
+                    if self.state == "speaking":
+                        cadence = (math.sin(self.phase * 1.8 + i * 1.2) * 0.25 + 0.75)
+                        level_factor = max(target_level, 0.40)
+                        target_h = max(3.5, (level_factor * 18.0 + 3.0) * bell * wave * cadence)
+                    elif self.state == "listening":
+                        target_h = max(3.0, (target_level * 18.0 + 3.0) * bell * wave)
+                    else:
+                        target_h = 3.0
+
+                    self.bars[i % 7] = self.bars[i % 7] * 0.55 + target_h * 0.45
+                    bh = min(18.0, max(2.5, self.bars[i % 7]))
+
+                    bx = start_x + i * (bar_w + spacing)
+                    by1 = dot_y - bh / 2
+                    by2 = dot_y + bh / 2
+
+                    t = i / num_bars
+                    bar_color = bar_color1 if t < 0.5 else bar_color2
+                    self.canvas.create_line(bx, by1, bx, by2, fill=bar_color, width=bar_w, capstyle="round")
+
+            # Deck 2: Physical CD-Player Transport Buttons
+            btn_defs = [
+                ("prev", "⏮", 10, 68),
+                ("rewind", "⏪ 5s", 74, 132),
+                ("play_pause", "▶" if self.state == "paused" else "⏸", 138, 196),
+                ("forward", "⏩ 5s", 202, 260),
+                ("next", "⏭", 266, 324),
+                ("skip", "⏹ Skip", 330, 390),
+            ]
+
+            btn_y1 = 48
+            btn_y2 = 76
+            cy = (btn_y1 + btn_y2) / 2
+
+            for btn_id, icon, bx1, bx2 in btn_defs:
+                is_btn_hover = (self.hovered_button == btn_id)
+
+                if is_btn_hover:
+                    btn_fill = "#222d3d"
+                    btn_border = glow_color
+                    txt_fill = glow_color
+                elif btn_id == "play_pause":
+                    # Center Play/Pause button styling
+                    if self.state == "paused":
+                        btn_fill = "#262012"
+                        btn_border = "#ffd600"
+                        txt_fill = "#ffd600"
+                    else:
+                        btn_fill = "#1b2535"
+                        btn_border = glow_color
+                        txt_fill = glow_color
+                else:
+                    btn_fill = "#161c26"
+                    btn_border = "#2b3648"
+                    txt_fill = "#e6edf3"
+
+                self._draw_rounded_rect(bx1, btn_y1, bx2, btn_y2, 5, fill=btn_fill, outline=btn_border, width=1)
+                font_spec = ("Segoe UI Symbol", 9, "bold") if ("5s" in icon or "Skip" in icon) else ("Segoe UI Symbol", 11)
+                self.canvas.create_text((bx1 + bx2) / 2, cy, text=icon, fill=txt_fill, font=font_spec)
+
         else:
+            # === COMPACT PILL MODE (h = 38) ===
+            dot_y = h / 2
+            dot_x = 18
+            dot_r = 3.5
+            self.canvas.create_oval(dot_x - dot_r, dot_y - dot_r, dot_x + dot_r, dot_y + dot_r, fill=dot_color, outline="")
+
             display_label = self.status_text
             for prefix in ("AudioMind • ", "AudioMind: ", "Anti • ", "Anti: "):
                 if display_label.startswith(prefix):
@@ -492,108 +620,62 @@ class WaveformHud:
             if display_label in ("AudioMind", "AudioMind is online", "Anti", "Anti is online", ""):
                 display_label = default_status
 
-            if len(display_label) > 36:
-                display_label = display_label[:35] + "…"
-            txt_fill = "#e6edf3"
+            if len(display_label) > 42:
+                display_label = display_label[:41] + "…"
 
-        self.canvas.create_text(22, dot_y, text=display_label, fill=txt_fill, font=("Segoe UI", 9, "bold"), anchor="w")
+            self.canvas.create_text(32, dot_y, text=display_label, fill="#e6edf3", font=("Segoe UI", 9, "bold"), anchor="w")
 
-        # 4. Right side indicator
-        if self.state in ("processing", "thinking"):
-            num_dots = 3
-            dot_spacing = 9
-            start_dot_x = w - 38
-            for i in range(num_dots):
-                pulse = (math.sin(self.phase * 3.6 - i * 0.9) + 1.0) / 2.0
-                r = 1.8 + pulse * 1.6
-                dot_fill = "#ffd600" if pulse > 0.4 else "#ff9100"
-                dx = start_dot_x + i * dot_spacing
-                self.canvas.create_oval(dx - r, dot_y - r, dx + r, dot_y + r, fill=dot_fill, outline="")
-        elif self.state == "paused":
-            # Two crisp paused vertical bars ||
-            pause_w = 3.0
-            pause_h = 13.0
-            p1_x = w - 28
-            p2_x = w - 21
-            self.canvas.create_line(p1_x, dot_y - pause_h/2, p1_x, dot_y + pause_h/2, fill="#ffd600", width=pause_w, capstyle="round")
-            self.canvas.create_line(p2_x, dot_y - pause_h/2, p2_x, dot_y + pause_h/2, fill="#ffd600", width=pause_w, capstyle="round")
-        else:
-            # 7 Animated Waveform Bars
-            num_bars = 7
-            bar_w = 2.5
-            spacing = 4
-            total_bars_w = num_bars * bar_w + (num_bars - 1) * spacing
-            start_x = w - total_bars_w - 14
+            if self.state in ("processing", "thinking"):
+                num_dots = 3
+                dot_spacing = 9
+                start_dot_x = w - 44
+                for i in range(num_dots):
+                    pulse = (math.sin(self.phase * 3.6 - i * 0.9) + 1.0) / 2.0
+                    r = 1.8 + pulse * 1.6
+                    dot_fill = "#ffd600" if pulse > 0.4 else "#ff9100"
+                    dx = start_dot_x + i * dot_spacing
+                    self.canvas.create_oval(dx - r, dot_y - r, dx + r, dot_y + r, fill=dot_fill, outline="")
+            elif self.state == "paused":
+                pause_w = 3.0
+                pause_h = 13.0
+                p1_x = w - 34
+                p2_x = w - 26
+                self.canvas.create_line(p1_x, dot_y - pause_h/2, p1_x, dot_y + pause_h/2, fill="#ffd600", width=pause_w, capstyle="round")
+                self.canvas.create_line(p2_x, dot_y - pause_h/2, p2_x, dot_y + pause_h/2, fill="#ffd600", width=pause_w, capstyle="round")
+            else:
+                num_bars = 8
+                bar_w = 2.5
+                spacing = 4.5
+                total_bars_w = num_bars * bar_w + (num_bars - 1) * spacing
+                start_x = w - total_bars_w - 20
 
-            with self._lock:
-                target_level = self.audio_level
+                with self._lock:
+                    target_level = self.audio_level
 
-            for i in range(num_bars):
-                dist = abs(i - num_bars / 2) / (num_bars / 2)
-                bell = math.exp(-2.0 * (dist ** 2))
-                wave = math.sin(self.phase * 2.4 + i * 0.65) * 0.35 + 0.65
+                for i in range(num_bars):
+                    dist = abs(i - num_bars / 2) / (num_bars / 2)
+                    bell = math.exp(-2.0 * (dist ** 2))
+                    wave = math.sin(self.phase * 2.4 + i * 0.65) * 0.35 + 0.65
 
-                if self.state == "speaking":
-                    # Voice cadence modulation combining real-time RMS with harmonic speech inflection
-                    cadence = (math.sin(self.phase * 1.8 + i * 1.2) * 0.25 + 0.75)
-                    level_factor = max(target_level, 0.40)
-                    target_h = max(3.5, (level_factor * 18.0 + 3.0) * bell * wave * cadence)
-                elif self.state == "listening":
-                    # Microphone AGC level response
-                    target_h = max(3.0, (target_level * 18.0 + 3.0) * bell * wave)
-                else:
-                    target_h = 3.0
+                    if self.state == "speaking":
+                        cadence = (math.sin(self.phase * 1.8 + i * 1.2) * 0.25 + 0.75)
+                        level_factor = max(target_level, 0.40)
+                        target_h = max(3.5, (level_factor * 18.0 + 3.0) * bell * wave * cadence)
+                    elif self.state == "listening":
+                        target_h = max(3.0, (target_level * 18.0 + 3.0) * bell * wave)
+                    else:
+                        target_h = 3.0
 
-                # Smooth bar inertia
-                self.bars[i] = self.bars[i] * 0.55 + target_h * 0.45
-                bh = min(20.0, max(2.5, self.bars[i]))
+                    self.bars[i % 7] = self.bars[i % 7] * 0.55 + target_h * 0.45
+                    bh = min(18.0, max(2.5, self.bars[i % 7]))
 
-                bx = start_x + i * (bar_w + spacing)
-                by1 = dot_y - bh / 2
-                by2 = dot_y + bh / 2
+                    bx = start_x + i * (bar_w + spacing)
+                    by1 = dot_y - bh / 2
+                    by2 = dot_y + bh / 2
 
-                t = i / num_bars
-                bar_color = bar_color1 if t < 0.5 else bar_color2
-                self.canvas.create_line(bx, by1, bx, by2, fill=bar_color, width=bar_w, capstyle="round")
-
-        # 5. Row 2 CD-Player Transport Controls (when expanded h >= 50)
-        if h >= 50:
-            # Thin divider line separating status row from controls
-            self.canvas.create_line(14, 31, w - 14, 31, fill="#21262d", width=1)
-
-            btn_defs = [
-                ("prev", "⏮"),
-                ("rewind", "⏪ 5s"),
-                ("play_pause", "▶" if self.state == "paused" else "⏸"),
-                ("forward", "⏩ 5s"),
-                ("next", "⏭"),
-                ("skip", "⏹"),
-            ]
-
-            start_x = 12
-            btn_w = 46
-            spacing = 6
-            y1 = 34
-            y2 = 55
-            cy = 44.5
-
-            for i, (btn_id, icon) in enumerate(btn_defs):
-                bx1 = start_x + i * (btn_w + spacing)
-                bx2 = bx1 + btn_w
-                is_btn_hover = (self.hovered_button == btn_id)
-
-                if is_btn_hover:
-                    btn_fill = "#21262d"
-                    btn_border = glow_color
-                    txt_fill = glow_color
-                else:
-                    btn_fill = "#161b22"
-                    btn_border = "#30363d"
-                    txt_fill = "#e6edf3"
-
-                self._draw_rounded_rect(bx1, y1, bx2, y2, 4, fill=btn_fill, outline=btn_border, width=1)
-                font_spec = ("Segoe UI", 8, "bold") if "5s" in icon else ("Segoe UI", 9)
-                self.canvas.create_text((bx1 + bx2) / 2, cy, text=icon, fill=txt_fill, font=font_spec)
+                    t = i / num_bars
+                    bar_color = bar_color1 if t < 0.5 else bar_color2
+                    self.canvas.create_line(bx, by1, bx, by2, fill=bar_color, width=bar_w, capstyle="round")
 
     def destroy(self):
         self.is_running = False

@@ -3,14 +3,12 @@
 <!-- Read on Turn 1 boot. Strictly pruned after milestone completion. -->
 
 ## Current Objective
-- Restore High-Fidelity Neural Voice via Local Kokoro-82M ONNX & Resolve Robot Voice.
+- Dual-Deck Physical CD-Player Waveform HUD & Streamlined Settings Tray.
 
 ## Status & Gate Verification
-- [x] Root Cause: Edge-TTS WebSocket 403 error dropped synthesis to Windows SAPI (Zira robot voice).
-- [x] Kokoro-ONNX Neural Engine: Integrated 82M ONNX model (af_heart warm human voice, 48kHz stereo float32 PCM).
-- [x] Tiered Fallback Engine: Tier 1 Kokoro (offline) -> Tier 2 Edge-TTS -> Tier 3 SAPI.
-- [x] Verification: Desktop 39/39 passed, Relay 7/7 passed. AudioMind launched and active in tray.
-- [x] Cross-Repo Sync: audiomind committed & pushed (216febd), anti-voice-assistant committed locally.
+- [x] Dual-Deck CD-Player HUD: 400x84px layout with recessed LCD readout pocket (OSD hints, spectrum analyzer) and physical transport bay (58px buttons with 8px gaps: ⏮, ⏪ 5s, ⏯, ⏩ 5s, ⏭, ⏹ Skip). Zero text clipping.
+- [x] Settings Tray: Submenu `⚙️ Settings >` groups dock, themes, speed, mute, listener, greeting, and firewall.
+- [x] Verification: 49/49 desktop tests passed, 7/7 relay tests passed. Gate T topology and Gate M cartography clean.
 
 ## Immediate Next Action (Post-Compact)
-- Await user feedback on newly restored high-definition neural voice.
+- User testing of the 400x84 physical CD-player transport controls and OSD feedback.
