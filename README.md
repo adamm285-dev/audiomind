@@ -6,6 +6,7 @@
 [![Engine: Python 3.12%2F3.13](https://img.shields.io/badge/Engine-Python_3.12%2B-3776AB?logo=python)](https://python.org)
 [![Relay: FastAPI](https://img.shields.io/badge/Relay-FastAPI-009688?logo=fastapi)](https://fastapi.tiangolo.com)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Podcast: Deep Dive](https://img.shields.io/badge/Podcast-Deep_Dive_(7m)-8A2BE2?logo=googlepodcasts)](docs/PODCAST_TRANSCRIPT.md)
 
 ---
 
@@ -22,6 +23,12 @@ We built a lightweight Windows taskbar harness that sits in the system tray, ani
 ...and desktop Antigravity would focus, execute, acknowledge via cloud relay, and speak back the complete summary to the phone.
 
 This repository is that complete, end-to-end full-stack voice companion system.
+
+### 🎙️ Listen to the 7-Minute Deep Dive Explainer
+Hear the AI hosts break down why AudioMind was built—from the dreaded "15-minute idle tax" and 1998 robotic microwave voice hacks to the CD-player HUD and zero-trust AST firewall:
+- 🎧 **Audio Episode**: [`docs/media/audiomind_deep_dive_podcast.m4a`](docs/media/audiomind_deep_dive_podcast.m4a)
+- 📝 **Full Timecoded Transcript & Show Notes**: [`docs/PODCAST_TRANSCRIPT.md`](docs/PODCAST_TRANSCRIPT.md)
+- 📖 **Project Wiki**: [`wiki/Home.md`](wiki/Home.md)
 
 ---
 

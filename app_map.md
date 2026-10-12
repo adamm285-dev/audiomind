@@ -108,6 +108,15 @@
 - `__init__.py`
 - `hud.py`
 
+### `docs/`
+- `PODCAST_TRANSCRIPT.md`
+
+### `docs/media/`
+- `audiomind_deep_dive_podcast.m4a`
+
+### `media/`
+- `audiomindhudpic.PNG`
+
 ### `prompts/`
 - `grillme.md`
 
@@ -143,3 +152,7 @@
 
 ### `tests/fixtures/`
 - `init.txt`
+
+### `wiki/`
+- `Deep-Dive-Audio-Explainer.md`
+- `Home.md`
