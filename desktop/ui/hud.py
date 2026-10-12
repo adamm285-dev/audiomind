@@ -163,33 +163,42 @@ class WaveformHud:
         if w is None:
             w = self.width
 
+        # Proportional button widths: compact single-glyph buttons (52px), medium transport (60-70px),
+        # and generous width for '⏹ Skip' (82px) to prevent text overflow and ensure symmetrical chassis margins.
         btn_data = [
-            ("prev", "⏮"),
-            ("rewind", "⏪ 5s"),
-            ("play_pause", "▶" if self.state == "paused" else "⏸"),
-            ("forward", "⏩ 5s"),
-            ("next", "⏭"),
-            ("skip", "⏹ Skip"),
+            ("prev", "⏮", 52),
+            ("rewind", "⏪ 5s", 70),
+            ("play_pause", "▶" if self.state == "paused" else "⏸", 60),
+            ("forward", "⏩ 5s", 70),
+            ("next", "⏭", 52),
+            ("skip", "⏹ Skip", 82),
         ]
 
-        num_btns = len(btn_data)
-        bw = 70
+        total_base = sum(b[2] for b in btn_data)
         gap = 8
-        total_w = num_btns * bw + (num_btns - 1) * gap
+        num_btns = len(btn_data)
+        total_w = total_base + (num_btns - 1) * gap
 
-        # Dynamically scale down if width is narrower than total_w + 20
-        if w < total_w + 20:
-            avail = max(w - 20, 100)
+        # Dynamically scale down if width is narrower than total_w + 24
+        if w < total_w + 24:
+            avail = max(w - 24, 100)
             gap = max(4, int(avail * 0.08 / (num_btns - 1)))
-            bw = int((avail - (num_btns - 1) * gap) / num_btns)
-            total_w = num_btns * bw + (num_btns - 1) * gap
+            scale = (avail - (num_btns - 1) * gap) / max(1, total_base)
+            defs = []
+            cur_x = (w - avail) // 2
+            for btn_id, icon, bw in btn_data:
+                scaled_bw = int(bw * scale)
+                defs.append((btn_id, icon, cur_x, cur_x + scaled_bw))
+                cur_x += scaled_bw + gap
+            return defs
 
-        start_x = max(6, (w - total_w) // 2)
-
+        start_x = (w - total_w) // 2
         defs = []
-        for i, (btn_id, icon) in enumerate(btn_data):
-            bx1 = start_x + i * (bw + gap)
-            bx2 = bx1 + bw
+        cur_x = start_x
+        for btn_id, icon, bw in btn_data:
+            bx1 = cur_x
+            bx2 = cur_x + bw
+            cur_x += bw + gap
             defs.append((btn_id, icon, bx1, bx2))
         return defs
 
