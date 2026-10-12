@@ -70,6 +70,11 @@ Hear the AI hosts break down why AudioMind was built—from the dreaded "15-minu
 
 ### 1. Desktop Voice Harness (`desktop/`)
 * **System Tray & Waveform HUD**: Native Windows notification tray app with a dark menu, real-time status indicators (Idle, Listening, Thinking, Speaking, Paused), and a floating translucent waveform HUD animating real-time microphone and speaker audio. **Click anywhere on the waveform HUD** to interactively pause or resume speech.
+
+<p align="center">
+  <img src="media/audiomindhudpic.PNG" alt="AudioMind CD-Player Waveform HUD" width="500">
+</p>
+
 * **Read Highlighted Text Anywhere**: Select any text on your screen across any application (Antigravity IDE, browser, PDF reader, Slack, Word, terminal, etc.) and click **"📖 Read Highlighted Text"** in the tray menu, press global hotkey **`Ctrl+Alt+R`**, or say *"Hey Anti, read this"* / *"read highlighted text"*. Anti captures the selection, animates the waveform HUD, and reads it aloud with chapter seeking, pause/resume, and 5s rewind/forward controls.
 * **Audio Playback Navigation**: Granular speech navigation available directly in the system tray menu (`⏩ Forward 5s`, `⏪ Rewind 5s`, `⏭ Skip Chapter`, `⏮ Repeat Chapter`, `⏸ Pause/Resume`, `⏹ Stop`) and via hands-free voice commands (*"pause"*, *"resume"*, *"stop"*, *"rewind"*, *"skip chapter"*, *"repeat chapter"*). Automatically extracts structured chapters from markdown headings, numbered lists, paragraphs, or sentence clusters for seamless seeking. Evaluated only when speech is active with whole-phrase matching to eliminate voice intent collisions.
 * **Safe Focus & UIPI Protection**: Focuses Antigravity chat directly via `Ctrl+L` and double-checks foreground window focus before typing. Queries Win32 `TokenElevation` to prevent synthetic typing when Antigravity IDE runs with elevated privileges, speaking an audible explanation.
@@ -219,5 +224,3 @@ Please report security issues responsibly. See [`SECURITY.md`](SECURITY.md) for 
 ## License
 
 Distributed under the **Apache License 2.0**. See [`LICENSE`](LICENSE) for details.
-
-*Authored with Google Antigravity Pair Programming.*

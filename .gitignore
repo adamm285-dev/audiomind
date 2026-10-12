@@ -71,3 +71,7 @@ desktop/resources/models/voices*
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# SDCS Sessions & Flight Recorder Logs
+sessions/
+
