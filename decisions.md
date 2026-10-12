@@ -55,3 +55,9 @@
 - **The Claim:** Relying exclusively on Edge-TTS cloud service without a local offline fallback is sufficient for ambient voice playback.
 - **The Measurement:** Microsoft Edge-TTS rotated client tokens, returning 403 Forbidden. With no fallback, speech synthesis failed, returning empty audio without invoking the audio player. In the app worker, `finally:` checked `if not is_speech_active():`; if previous audio was paused, `is_speech_active()` returned `True`, trapping the HUD and tray in `"AudioMind • Preparing..."` indefinitely.
 - **What Would Reopen It:** Never. Invariant: Ambient speech assistant must have offline local Windows SAPI fallback (`synth_sapi_pcm`) with fast circuit breaking on cloud errors, speech-stopping mutex synchronization (`self._speak_lock`), and fail-safe HUD/tray cleanup that handles paused and error states explicitly.
+
+## REJ-012: Unauthenticated Web Scraper (Edge-TTS) as Primary Speech Engine
+- **The Claim:** Relying on reverse-engineered Edge-TTS WebSocket endpoints (`wss://speech.platform.bing.com/...`) provides long-term free neural speech.
+- **The Measurement:** Microsoft intermittently updates anti-abuse client tokens (`Sec-MS-GEC`), resulting in persistent HTTP/WebSocket 403 Forbidden handshake rejections. Dropping straight to legacy Windows SAPI 5.0 degrades the user experience to robotic 2005-era voice synthesis (`Microsoft Zira Desktop`).
+- **What Would Reopen It:** Never for primary production speech. Upgraded to a tiered architecture with Kokoro-82M ONNX local neural synthesis as Tier 1 (100% offline, 48kHz stereo, zero network dependencies, warm human-grade voice), Edge-TTS as Tier 2, and SAPI strictly as emergency Tier 3 failsafe.
+

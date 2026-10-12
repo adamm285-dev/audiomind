@@ -3,13 +3,14 @@
 <!-- Read on Turn 1 boot. Strictly pruned after milestone completion. -->
 
 ## Current Objective
-- Offline SAPI Speech Fallback & Preparing State Freeze Resolution.
+- Restore High-Fidelity Neural Voice via Local Kokoro-82M ONNX & Resolve Robot Voice.
 
 ## Status & Gate Verification
-- [x] Edge-TTS 403 Circuit Breaker: Rapidly trips on HTTP/WS 403 to prevent thread timeouts.
-- [x] Local Offline SAPI Fallback: Windows SAPI.SpVoice (48kHz stereo float32 PCM) active for multi-chapter and single-pass speech.
-- [x] HUD & Tray Freeze Remediation: Concurrency lock (_speak_lock), stop_speech() on new response, and explicit paused/stopped state cleanup in app worker.
-- [x] Full Verification: Desktop (38/38 passed), Relay (7/7 passed), Android (28/28 verified). Clean git tree.
+- [x] Root Cause: Edge-TTS WebSocket 403 error dropped synthesis to Windows SAPI (Zira robot voice).
+- [x] Kokoro-ONNX Neural Engine: Integrated 82M ONNX model (af_heart warm human voice, 48kHz stereo float32 PCM).
+- [x] Tiered Fallback Engine: Tier 1 Kokoro (offline) -> Tier 2 Edge-TTS -> Tier 3 SAPI.
+- [x] Verification: Desktop 39/39 passed, Relay 7/7 passed. AudioMind launched and active in tray.
+- [x] Cross-Repo Sync: audiomind committed & pushed (216febd), anti-voice-assistant committed locally.
 
 ## Immediate Next Action (Post-Compact)
-- Inform user of root cause, verified fixes, and provide instructions to start AudioMind.
+- Await user feedback on newly restored high-definition neural voice.
