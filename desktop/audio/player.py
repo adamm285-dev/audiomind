@@ -39,6 +39,7 @@ class SpeechPlayer:
         # Chapter navigation markers (sample offsets) and titles
         self.chapter_markers: list[int] = [0]
         self.chapter_titles: list[str] = ["Overview"]
+        self._stream_complete: bool = True
 
     def _callback(self, outdata, frames, time_info, status):
         with self._lock:
@@ -48,12 +49,16 @@ class SpeechPlayer:
 
             if self.audio_data is None:
                 outdata.fill(0)
-                raise CallbackStop()
+                if self._stream_complete:
+                    raise CallbackStop()
+                return
 
             remaining = len(self.audio_data) - self.current_idx
             if remaining <= 0:
                 outdata.fill(0)
-                raise CallbackStop()
+                if self._stream_complete:
+                    raise CallbackStop()
+                return
 
             chunk_len = min(frames, remaining)
             outdata[:chunk_len] = self.audio_data[self.current_idx:self.current_idx + chunk_len]
@@ -72,7 +77,7 @@ class SpeechPlayer:
             except Exception:
                 pass
 
-        if remaining <= chunk_len:
+        if remaining <= chunk_len and self._stream_complete:
             raise CallbackStop()
 
     def play_pcm(
@@ -80,6 +85,7 @@ class SpeechPlayer:
         audio_data: np.ndarray,
         chapter_markers: Optional[list[int]] = None,
         chapter_titles: Optional[list[str]] = None,
+        stream_complete: bool = True,
         on_start: Optional[Callable[[], None]] = None,
         on_level: Optional[Callable[[float], None]] = None,
         on_finish: Optional[Callable[[], None]] = None
@@ -91,6 +97,7 @@ class SpeechPlayer:
             self.current_idx = 0
             self._is_playing = True
             self._is_paused = False
+            self._stream_complete = stream_complete
             self.on_level_callback = on_level
             self.on_finish_callback = on_finish
 
@@ -145,6 +152,38 @@ class SpeechPlayer:
                 finished_callback=_finished
             )
             self._stream.start()
+
+    def append_pcm(
+        self,
+        pcm_chunk: np.ndarray,
+        chapter_title: str = "",
+        pause_sec: float = 0.25
+    ):
+        """Append a newly synthesized PCM chunk to the active audio buffer with an optional pause."""
+        if pcm_chunk is None or len(pcm_chunk) == 0:
+            return
+        with self._lock:
+            if self.audio_data is None:
+                self.audio_data = pcm_chunk
+                self.chapter_markers = [0]
+                self.chapter_titles = [chapter_title or "Overview"]
+            else:
+                silence_frames = int(pause_sec * self.samplerate)
+                channels = self.audio_data.shape[1] if self.audio_data.ndim == 2 else 1
+                if channels > 1:
+                    silence = np.zeros((silence_frames, channels), dtype=np.float32)
+                else:
+                    silence = np.zeros(silence_frames, dtype=np.float32)
+
+                new_marker = len(self.audio_data) + silence_frames
+                self.audio_data = np.concatenate([self.audio_data, silence, pcm_chunk])
+                self.chapter_markers.append(new_marker)
+                self.chapter_titles.append(chapter_title or f"Chapter {len(self.chapter_markers)}")
+
+    def set_stream_complete(self, complete: bool = True):
+        """Signals whether the producer has finished appending chapters to the stream."""
+        with self._lock:
+            self._stream_complete = complete
 
     def pause(self) -> bool:
         """Pause playback while holding current playback position."""
@@ -319,6 +358,7 @@ class SpeechPlayer:
         with self._lock:
             self._is_playing = False
             self._is_paused = False
+            self._stream_complete = True
         if self._stream:
             try:
                 self._stream.stop()

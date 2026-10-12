@@ -435,5 +435,102 @@ def test_kokoro_tiered_synthesis_and_chapter_alignment(monkeypatch):
     assert played_kwargs["titles"] == ["Setup", "Run"]
     assert len(played_kwargs["markers"]) == 2
 
+def test_speech_queue_item_chat_tag_extraction():
+    """Verify chat tag extraction from Windows and POSIX transcript filepaths."""
+    from desktop.app import SpeechQueueItem
+
+    # Windows style path
+    p_win = r"C:\Users\test\.gemini\antigravity\brain\32caa6ee-c05c-409c-bf5b-a4db56b32632\.system_generated\logs\transcript.jsonl"
+    item1 = SpeechQueueItem(text="Hello", filepath=p_win, step_index=10)
+    assert item1.chat_tag == "32ca"
+
+    # POSIX style path
+    p_nix = "/home/user/.gemini/antigravity/brain/8b594321-abcd-ef01-2345/.system_generated/logs/transcript.jsonl"
+    item2 = SpeechQueueItem(text="World", filepath=p_nix, step_index=15)
+    assert item2.chat_tag == "8b59"
+
+    # Missing or unrecognized path
+    item3 = SpeechQueueItem(text="Standalone", filepath=None)
+    assert item3.chat_tag == ""
+
+    item4 = SpeechQueueItem(text="Other", filepath=r"C:\workspace\file.txt")
+    assert item4.chat_tag == ""
+
+def test_speech_player_streaming_append_pcm():
+    """Verify SpeechPlayer streaming playback, dynamic append_pcm, and marker updates."""
+    import numpy as np
+    from desktop.audio.player import SpeechPlayer
+
+    player = SpeechPlayer(samplerate=48000)
+    sr = 48000
+    pcm1 = np.ones((2 * sr, 2), dtype=np.float32) * 0.5  # 2s audio
+    pcm2 = np.ones((3 * sr, 2), dtype=np.float32) * 0.3  # 3s audio
+
+    # Play initial chapter with stream_complete=False
+    player.play_pcm(pcm1, chapter_markers=[0], chapter_titles=["Chapter 1"], stream_complete=False)
+    player._is_playing = True
+    player._is_paused = False
+
+    assert player.total_chapters == 1
+    assert player._stream_complete is False
+    assert player.current_chapter_title == "Chapter 1"
+
+    # Append Chapter 2 dynamically
+    player.append_pcm(pcm2, chapter_title="Chapter 2", pause_sec=0.25)
+    assert player.total_chapters == 2
+    assert player.chapter_titles == ["Chapter 1", "Chapter 2"]
+    # Check that new marker is placed after 2s + 0.25s silence
+    expected_marker = int((2.0 + 0.25) * sr)
+    assert player.chapter_markers[1] == expected_marker
+
+    # Mark stream complete
+    player.set_stream_complete(True)
+    assert player._stream_complete is True
+
+    player.stop()
+    assert player._stream_complete is True
+
+def test_match_playback_intent_skip_output():
+    """Verify SKIP_OUTPUT intent recognition for fast response skipping."""
+    from desktop.app import match_playback_intent
+
+    skip_phrases = [
+        "skip output",
+        "next output",
+        "skip response",
+        "next response",
+        "skip to next output",
+        "skip to next response",
+    ]
+
+    for phrase in skip_phrases:
+        # Must match when speech is active
+        assert match_playback_intent(phrase, speech_active=True) == "SKIP_OUTPUT", f"Phrase '{phrase}' should match SKIP_OUTPUT"
+        # Must return None when speech is inactive
+        assert match_playback_intent(phrase, speech_active=False) is None, f"Phrase '{phrase}' should be gated when inactive"
+
+def test_hud_right_click_and_double_click_callbacks():
+    """Verify HUD right-click and double-click callbacks trigger the skip output callback."""
+    from desktop.ui.hud import WaveformHud
+
+    hud = WaveformHud(position="bottom_right")
+    right_clicks = []
+    double_clicks = []
+
+    hud.on_right_click = lambda: right_clicks.append(True)
+    hud.on_double_click = lambda: double_clicks.append(True)
+
+    assert hud._on_canvas_right_click() == "break"
+    assert len(right_clicks) == 1
+
+    assert hud._on_canvas_double_click() == "break"
+    assert len(double_clicks) == 1
+
+    # If double-click is not set, it should fall back to on_right_click
+    hud.on_double_click = None
+    assert hud._on_canvas_double_click() == "break"
+    assert len(right_clicks) == 2
+
+
 
 

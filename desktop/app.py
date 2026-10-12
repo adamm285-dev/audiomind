@@ -499,6 +499,10 @@ def match_playback_intent(text: str, speech_active: bool) -> Optional[str]:
     STOP_COMMANDS = {
         "stop", "cancel", "stop talking", "shut up", "be quiet", "stop speech", "cancel reading"
     }
+    SKIP_OUTPUT_COMMANDS = {
+        "skip output", "next output", "skip response", "next response",
+        "skip to next output", "skip to next response"
+    }
 
     if clean in PAUSE_COMMANDS:
         return "PAUSE"
@@ -512,6 +516,8 @@ def match_playback_intent(text: str, speech_active: bool) -> Optional[str]:
         return "REPEAT_CHAPTER"
     if clean in STOP_COMMANDS:
         return "STOP"
+    if clean in SKIP_OUTPUT_COMMANDS:
+        return "SKIP_OUTPUT"
 
     return None
 
@@ -605,6 +611,30 @@ def check_elevation_mismatch(target_pid: int) -> tuple[bool, Optional[str]]:
         return (True, "Anti couldn't verify Antigravity's permissions, so nothing was typed.")
     return (False, None)
 
+class SpeechQueueItem:
+    def __init__(self, text: str, filepath: Optional[str] = None, step_index: Optional[int] = None):
+        self.text = text
+        self.filepath = filepath
+        self.step_index = step_index
+        self.created_at = time.time()
+        self.chat_tag = self._extract_chat_tag(filepath)
+
+    @staticmethod
+    def _extract_chat_tag(filepath: Optional[str]) -> str:
+        if not filepath:
+            return ""
+        try:
+            norm = filepath.replace("\\", "/").split("/")
+            if "brain" in norm:
+                b_idx = norm.index("brain")
+                if b_idx + 1 < len(norm):
+                    raw_id = norm[b_idx + 1].strip()
+                    # Return first 4 chars of the conversation UUID
+                    return raw_id[:4].lower()
+        except Exception:
+            pass
+        return ""
+
 class AntiTrayApp:
     def __init__(self):
         attach_to_default_desktop()
@@ -615,11 +645,18 @@ class AntiTrayApp:
         self.auto_read = True
         self.last_spoken_summary = ""
         self.last_injection_error = None
-        self.wakeword_threshold = 0.35
+        self.wakeword_threshold = 0.58
         self.current_state = "listening"
         self._pulse_thread = None
         self._focused_pid = None
         self.last_app_hwnd = None
+
+        # Speech Queue for sequential multi-agent / multi-turn playback & skip control
+        self.speech_queue: deque = deque()
+        self.current_speech_item: Optional[SpeechQueueItem] = None
+        self._speech_worker_event = threading.Event()
+        self._speech_worker_thread = None
+        self._skip_current_flag = False
 
         # Remote Android / Assistant Dispatch Listener (disabled by default)
         configured_url = os.getenv("REMOTE_DISPATCH_API_URL", "").strip().rstrip("/")
@@ -630,9 +667,11 @@ class AntiTrayApp:
         self.remote_poll_enabled = bool(self.remote_api_url and token)
         self._speak_lock = threading.Lock()
 
-        # Initialize HUD in background thread
+        # Initialize HUD in background thread with click and skip triggers
         self.hud = WaveformHud()
         self.hud.on_click = self.toggle_speech_pause
+        self.hud.on_right_click = self.skip_current_output
+        self.hud.on_double_click = self.skip_current_output
         self.hud.start()
 
         # Security & STT
@@ -655,31 +694,36 @@ class AntiTrayApp:
 
         # Wire speech player state changes to tray and HUD
         def _on_player_state(st: str):
+            chat_tag = f"[{self.current_speech_item.chat_tag}] " if (self.current_speech_item and self.current_speech_item.chat_tag) else ""
+            q_count = len(self.speech_queue)
+            q_str = f" • Q:{q_count}" if q_count > 0 else ""
+
             if st == "paused":
                 self.set_tray_state("paused", "AudioMind: Speech Paused (Click to Resume)")
                 if self.hud_enabled:
-                    self.hud.set_status("AudioMind • Paused", state="paused")
+                    self.hud.set_status(f"{chat_tag}Paused{q_str}", state="paused")
             elif st == "playing":
                 self.set_tray_state("anti_speaking", "AudioMind: Speaking...")
                 if self.hud_enabled:
-                    self.hud.show(state="speaking", status="AudioMind • Speaking")
+                    self.hud.show(state="speaking", status=f"{chat_tag}Speaking{q_str}")
             elif st == "rewound":
                 if self.hud_enabled:
-                    self.hud.set_status("AudioMind • Rewound 5s", state="speaking" if is_speaking() else "paused")
+                    self.hud.set_status(f"{chat_tag}Rewound 5s{q_str}", state="speaking" if is_speaking() else "paused")
             elif st == "forwarded":
                 if self.hud_enabled:
-                    self.hud.set_status("AudioMind • Forward 5s", state="speaking" if is_speaking() else "paused")
+                    self.hud.set_status(f"{chat_tag}Forward 5s{q_str}", state="speaking" if is_speaking() else "paused")
             elif st in ("chapter_skipped", "chapter_repeated"):
                 cur_ch, tot_ch, title = get_chapter_info()
                 if self.hud_enabled:
-                    self.hud.set_status(f"AudioMind • Ch {cur_ch}/{tot_ch}: {title[:20]}", state="speaking" if is_speaking() else "paused")
+                    self.hud.set_status(f"{chat_tag}Ch {cur_ch}/{tot_ch}: {title[:16]}{q_str}", state="speaking" if is_speaking() else "paused")
             elif st in ("stopped", "finished"):
-                if self.hud_enabled:
-                    self.hud.hide()
-                if not self.muted:
-                    self.set_tray_state("listening", "AudioMind: Listening for 'Hey Anti'")
-                else:
-                    self.set_tray_state("muted", "AudioMind: Microphone Muted")
+                if len(self.speech_queue) == 0:
+                    if self.hud_enabled:
+                        self.hud.hide()
+                    if not self.muted:
+                        self.set_tray_state("listening", "AudioMind: Listening for 'Hey Anti'")
+                    else:
+                        self.set_tray_state("muted", "AudioMind: Microphone Muted")
 
         get_speech_player().on_state_change = _on_player_state
 
@@ -698,12 +742,13 @@ class AntiTrayApp:
             item("⏩  Forward 5 Seconds", self.forward_speech_5, enabled=lambda it: is_speech_active()),
             item("⏪  Rewind 5 Seconds", self.rewind_speech_5, enabled=lambda it: is_speech_active()),
             item("⏭️  Skip to Next Chapter", self.skip_next_chapter, enabled=lambda it: is_speech_active()),
+            item(lambda it: f"⏭️  Skip to Next Output ({len(self.speech_queue)} queued)" if len(self.speech_queue) > 0 else "⏭️  Skip to Next Output  (Ctrl+Alt+N)", self.skip_current_output, enabled=lambda it: is_speech_active() or len(self.speech_queue) > 0),
             item("⏮️  Repeat Last Chapter", self.repeat_chapter, enabled=lambda it: is_speech_active() or bool(self.last_spoken_summary)),
-            item("⏹️  Stop Speaking / Interrupt", self.interrupt_speech, enabled=lambda it: is_speech_active()),
+            item("⏹️  Stop Speaking / Interrupt", self.interrupt_speech, enabled=lambda it: is_speech_active() or len(self.speech_queue) > 0),
             item("🔁  Replay Last Response", self.replay_last_response),
             item("📖  Read Highlighted Text  (Ctrl+Alt+R)", self.read_highlighted_text),
             pystray.Menu.SEPARATOR,
-            item("🔇  Mute Microphone", self.toggle_mute, checked=lambda item: self.muted),
+            item("🔇  Mute Microphone  (Ctrl+Alt+M)", self.toggle_mute, checked=lambda item: self.muted),
             item("🌊  Desktop Waveform HUD", self.toggle_hud, checked=lambda item: self.hud_enabled, default=True),
             item("📌  Dock Waveform to Bottom-Right", self.toggle_hud_dock, checked=lambda item: self.hud.position == "bottom_right"),
             item("📱  Remote Assistant Dispatch Listener", self.toggle_remote_listener, checked=lambda item: self.remote_poll_enabled),
@@ -803,21 +848,58 @@ class AntiTrayApp:
     def skip_next_chapter(self, icon=None, item=None):
         new_ch = skip_to_next_chapter()
         cur_ch, tot_ch, title = get_chapter_info()
+        chat_tag = f"[{self.current_speech_item.chat_tag}] " if (self.current_speech_item and self.current_speech_item.chat_tag) else ""
+        q_count = len(self.speech_queue)
+        q_str = f" • Q:{q_count}" if q_count > 0 else ""
         if self.hud_enabled:
-            self.hud.set_status(f"AudioMind • Ch {cur_ch}/{tot_ch}: {title[:20]}", state="speaking" if is_speaking() else "paused")
+            self.hud.set_status(f"{chat_tag}Ch {cur_ch}/{tot_ch}: {title[:16]}{q_str}", state="speaking" if is_speaking() else "paused")
         print(f"[*] Skipped to Next Chapter -> Chapter {cur_ch}/{tot_ch} ({title})")
+
+    def skip_current_output(self, icon=None, item=None):
+        """Immediately skip the current playing response and jump to the next queued response."""
+        print("[⏭️ SKIP OUTPUT]: Skipping current response...")
+        self._skip_current_flag = True
+        stop_speech()
+        play_chime(rising=False)
+
+        q_count = len(self.speech_queue)
+        if self.hud_enabled:
+            if q_count > 0:
+                self.hud.set_status(f"Skipping... • Q:{q_count}", state="speaking")
+            else:
+                self.hud.set_status("Queue Empty", state="idle")
+                threading.Thread(target=self._hide_hud_after_delay, args=(1.0,), daemon=True).start()
+
+        self._speech_worker_event.set()
+
+    def _hide_hud_after_delay(self, delay: float = 1.0):
+        time.sleep(delay)
+        if len(self.speech_queue) == 0 and not is_speech_active():
+            if self.hud_enabled:
+                self.hud.hide()
+            if not self.muted:
+                self.set_tray_state("listening", "AudioMind: Listening for 'Hey Anti'")
+            else:
+                self.set_tray_state("muted", "AudioMind: Microphone Muted")
 
     def repeat_chapter(self, icon=None, item=None):
         if is_speech_active():
             new_ch = repeat_last_chapter()
             cur_ch, tot_ch, title = get_chapter_info()
+            chat_tag = f"[{self.current_speech_item.chat_tag}] " if (self.current_speech_item and self.current_speech_item.chat_tag) else ""
+            q_count = len(self.speech_queue)
+            q_str = f" • Q:{q_count}" if q_count > 0 else ""
             if self.hud_enabled:
-                self.hud.set_status(f"AudioMind • Ch {cur_ch}/{tot_ch}: {title[:20]}", state="speaking" if is_speaking() else "paused")
+                self.hud.set_status(f"{chat_tag}Ch {cur_ch}/{tot_ch}: {title[:16]}{q_str}", state="speaking" if is_speaking() else "paused")
             print(f"[*] Repeated Chapter -> Chapter {cur_ch}/{tot_ch} ({title})")
         elif self.last_spoken_summary:
             self.replay_last_response()
 
     def interrupt_speech(self, icon=None, item=None):
+        with self._speak_lock:
+            self.speech_queue.clear()
+            self.current_speech_item = None
+        self._skip_current_flag = True
         stop_speech()
         if self.hud_enabled:
             self.hud.hide()
@@ -983,35 +1065,75 @@ class AntiTrayApp:
         if not self.auto_read or not text:
             return
 
-        def _speak_worker():
+        queue_item = SpeechQueueItem(text=text, filepath=filepath, step_index=step_index)
+        with self._speak_lock:
+            self.speech_queue.append(queue_item)
+            q_len = len(self.speech_queue)
+
+        print(f"[📥 SPEECH QUEUED]: Chat='{queue_item.chat_tag or 'general'}' ({q_len} in queue)")
+
+        # If already speaking, update HUD to display updated queue counter
+        if is_speaking() and self.hud_enabled:
+            cur_ch, tot_ch, title = get_chapter_info()
+            chat_tag = f"[{self.current_speech_item.chat_tag}] " if (self.current_speech_item and self.current_speech_item.chat_tag) else ""
+            if tot_ch > 1:
+                self.hud.set_status(f"{chat_tag}Ch {cur_ch}/{tot_ch} • Q:{q_len}", state="speaking")
+            else:
+                self.hud.set_status(f"{chat_tag}Speaking • Q:{q_len}", state="speaking")
+
+        # Wake worker loop
+        self._speech_worker_event.set()
+
+    def _speech_queue_worker(self):
+        """Continuous background worker that plays queued assistant speech responses sequentially."""
+        while self.running:
+            item: Optional[SpeechQueueItem] = None
             with self._speak_lock:
-                stop_speech()
-                try:
-                    print(f"\n[🔊 ASSISTANT RESPONSE COMPLETED]: Preparing audio via Ava @ 48kHz...")
-                    self.set_tray_state("anti_speaking", "AudioMind: Preparing audio...")
+                if self.speech_queue:
+                    item = self.speech_queue.popleft()
+                    self.current_speech_item = item
+
+            if not item:
+                self._speech_worker_event.wait(timeout=0.25)
+                self._speech_worker_event.clear()
+                continue
+
+            self._skip_current_flag = False
+            try:
+                chat_prefix = f"[{item.chat_tag}] " if item.chat_tag else ""
+                q_count = len(self.speech_queue)
+                q_str = f" • Q:{q_count}" if q_count > 0 else ""
+
+                print(f"\n[🔊 ASSISTANT RESPONSE]: Chat={item.chat_tag or 'unknown'} ({q_count} queued)")
+                self.set_tray_state("anti_speaking", f"AudioMind: Preparing {chat_prefix}audio...")
+                if self.hud_enabled:
+                    self.hud.show(state="thinking", status=f"{chat_prefix}Preparing...{q_str}")
+
+                def _on_playback_start():
+                    q_now = len(self.speech_queue)
+                    q_now_str = f" • Q:{q_now}" if q_now > 0 else ""
+                    self.set_tray_state("anti_speaking", "AudioMind: Speaking...")
                     if self.hud_enabled:
-                        self.hud.show(state="thinking", status="AudioMind • Preparing...")
+                        self.hud.show(state="speaking", status=f"{chat_prefix}Speaking{q_now_str}")
 
-                    def _on_playback_start():
-                        print("[🔊 PLAYBACK COMMENCED]: Audio streaming through headset.")
-                        self.set_tray_state("anti_speaking", "AudioMind: Speaking...")
-                        if self.hud_enabled:
-                            self.hud.show(state="speaking", status="AudioMind • Speaking")
+                def _on_level(level: float):
+                    if self.hud_enabled and is_speaking():
+                        self.hud.update_audio_level(level)
 
-                    def _on_level(level: float):
-                        if self.hud_enabled and is_speaking():
-                            self.hud.update_audio_level(level)
+                speak(item.text, on_start=_on_playback_start, on_level=_on_level)
 
-                    speak(text, on_start=_on_playback_start, on_level=_on_level)
+            except Exception as e:
+                print(f"[!] Read-aloud queue worker error: {e}")
+            finally:
+                with self._speak_lock:
+                    self.current_speech_item = None
 
-                except Exception as e:
-                    print(f"[!] Read-aloud error: {e}")
-                finally:
+                if len(self.speech_queue) == 0:
                     if is_speaking():
                         pass
                     elif is_paused():
                         if self.hud_enabled:
-                            self.hud.set_status("AudioMind • Paused", state="paused")
+                            self.hud.set_status("Paused", state="paused")
                         self.set_tray_state("paused", "AudioMind: Speech Paused")
                     else:
                         if self.hud_enabled:
@@ -1021,22 +1143,23 @@ class AntiTrayApp:
                         else:
                             self.set_tray_state("muted", "AudioMind: Microphone Muted")
 
-        threading.Thread(target=_speak_worker, daemon=True).start()
-
-    def toggle_mute(self, icon, item):
+    def toggle_mute(self, icon=None, item=None):
         self.muted = not self.muted
         if self.muted:
+            stop_speech()
+            self.model.reset()
             self.set_tray_state("muted", "AudioMind: Microphone Muted (Paused)")
+            print("[🔇 MUTE]: Microphone is MUTED.")
             if self.hud_enabled:
-                self.hud.show(state="idle", status="AudioMind • Muted")
-                time.sleep(1.0)
-                self.hud.hide()
+                self.hud.show(state="muted", status="Mic Muted")
+                threading.Thread(target=self._hide_hud_after_delay, args=(1.2,), daemon=True).start()
         else:
+            self.model.reset()
             self.set_tray_state("listening", "AudioMind: Listening for 'Hey Anti'")
+            print("[🎙️ UNMUTE]: Microphone is ACTIVE.")
             if self.hud_enabled:
-                self.hud.show(state="listening", status="AudioMind • Listening")
-                time.sleep(1.0)
-                self.hud.hide()
+                self.hud.show(state="listening", status="Listening...")
+                threading.Thread(target=self._hide_hud_after_delay, args=(1.2,), daemon=True).start()
 
     def toggle_hud(self, icon, item):
         self.hud_enabled = not self.hud_enabled
@@ -1105,6 +1228,10 @@ class AntiTrayApp:
         print(f"[{time.strftime('%X')}] [🎙️ LISTENING]: Awaiting speech (up to {initial_timeout_sec}s to start, {max_duration_sec}s max)...")
 
         while True:
+            if self.muted:
+                print(f"[{time.strftime('%X')}] [🎙️ MUTED]: Command capture aborted because microphone is muted.")
+                return np.array([], dtype=np.int16), "muted"
+
             chunk = aec_stream.read_chunk()
             rms = float(np.sqrt(np.mean(chunk.astype(np.float32)**2)))
 
@@ -1132,7 +1259,7 @@ class AntiTrayApp:
                     collected_frames.extend(list(pre_roll))
                     print(f"[{time.strftime('%X')}] [🗣️ SPEECH DETECTED]: Recording utterance (RMS: {rms:.1f}, silence threshold: {silence_threshold:.1f})...")
                     if self.hud_enabled:
-                        self.hud.set_status("AudioMind • Listening", state="listening")
+                        self.hud.set_status("Listening...", state="listening")
                 else:
                     if now - start_time >= initial_timeout_sec:
                         print(f"[{time.strftime('%X')}] [ℹ️ INITIAL TIMEOUT]: No speech detected within {initial_timeout_sec}s.")
@@ -1439,7 +1566,12 @@ class AntiTrayApp:
                     print(f"[{time.strftime('%X')}] WASAPI AEC Stream initialized. Listening for 'Hey Anti'...")
                     while self.running:
                         if self.muted:
-                            time.sleep(0.1)
+                            try:
+                                aec_stream.drain()
+                            except Exception:
+                                pass
+                            self.model.reset()
+                            time.sleep(0.05)
                             continue
 
                         if time.time() < wake_cooldown_until:
@@ -1462,19 +1594,21 @@ class AntiTrayApp:
                             # Update Tray & HUD
                             self.set_tray_state("user_speaking", "AudioMind: Listening for your command...")
                             if self.hud_enabled:
-                                self.hud.show(state="listening", status="AudioMind • Listening")
+                                self.hud.show(state="listening", status="Listening...")
 
                             # Play wake acknowledgment chime
                             play_chime(rising=True)
 
                             # Capture user command audio with dual-phase VAD
                             audio_buf, status_reason = self.capture_command_audio(aec_stream)
-                            if status_reason == "initial_timeout" or len(audio_buf) == 0:
+                            if status_reason in ("initial_timeout", "muted") or len(audio_buf) == 0:
                                 self.set_tray_state("listening", "AudioMind: Listening for 'Hey Anti'")
                                 if self.hud_enabled:
-                                    self.hud.set_status("AudioMind • No Speech", state="idle")
-                                    time.sleep(1.2)
-                                    self.hud.hide()
+                                    if status_reason == "muted":
+                                        self.hud.set_status("Mic Muted", state="muted")
+                                    else:
+                                        self.hud.set_status("No Speech", state="idle")
+                                    threading.Thread(target=self._hide_hud_after_delay, args=(1.0,), daemon=True).start()
                                 if was_speaking and is_paused():
                                     resume_speech()
                                 aec_stream.drain()
@@ -1484,16 +1618,15 @@ class AntiTrayApp:
 
                             # Transcribe
                             if self.hud_enabled:
-                                self.hud.set_status("AudioMind • Thinking", state="processing")
+                                self.hud.set_status("Thinking...", state="processing")
                             self.set_tray_state("processing", "AudioMind: Processing command...")
 
                             prompt_text = self.transcribe(audio_buf)
                             if not prompt_text:
                                 print(f"[{time.strftime('%X')}] [⚠️ STT]: No recognizable words in {len(audio_buf)/16000:.1f}s audio.")
                                 if self.hud_enabled:
-                                    self.hud.set_status("AudioMind • Didn't Catch That", state="idle")
-                                    time.sleep(1.2)
-                                    self.hud.hide()
+                                    self.hud.set_status("Didn't Catch That", state="idle")
+                                    threading.Thread(target=self._hide_hud_after_delay, args=(1.2,), daemon=True).start()
                                 if was_speaking and is_paused():
                                     resume_speech()
                                 self.set_tray_state("listening", "AudioMind: Listening for 'Hey Anti'")
@@ -1504,16 +1637,16 @@ class AntiTrayApp:
 
                             print(f"[🗣️ USER SPOKE]: \"{prompt_text}\"")
 
-                            # --- Built-in Assistant Voice Controls (Pause, Resume, Rewind, Stop, Chapter Navigation) ---
+                            # --- Built-in Assistant Voice Controls (Pause, Resume, Rewind, Stop, Chapter Navigation, Skip Output) ---
                             # Note: Matched via match_playback_intent only while speech is active; 'forward' is tray button only.
-                            intent = match_playback_intent(prompt_text, is_speech_active())
+                            intent = match_playback_intent(prompt_text, is_speech_active() or len(self.speech_queue) > 0)
 
                             if intent == "PAUSE":
                                 pause_speech()
                                 play_chime(rising=False)
                                 self.set_tray_state("paused", "AudioMind: Speech Paused (Click to Resume)")
                                 if self.hud_enabled:
-                                    self.hud.set_status("AudioMind • Paused", state="paused")
+                                    self.hud.set_status("Paused", state="paused")
                                 print(f"[⏸️ VOICE COMMAND]: Speech paused by user request.")
                                 aec_stream.drain()
                                 self.model.reset()
@@ -1525,8 +1658,15 @@ class AntiTrayApp:
                                 play_chime(rising=True)
                                 self.set_tray_state("anti_speaking", "AudioMind: Speaking...")
                                 if self.hud_enabled:
-                                    self.hud.set_status("AudioMind • Speaking", state="speaking")
+                                    self.hud.set_status("Speaking...", state="speaking")
                                 print(f"[▶️ VOICE COMMAND]: Speech resumed by user request.")
+                                aec_stream.drain()
+                                self.model.reset()
+                                wake_cooldown_until = time.time() + 0.5
+                                continue
+
+                            elif intent == "SKIP_OUTPUT":
+                                self.skip_current_output()
                                 aec_stream.drain()
                                 self.model.reset()
                                 wake_cooldown_until = time.time() + 0.5
@@ -1538,8 +1678,11 @@ class AntiTrayApp:
                                 if not is_speaking():
                                     resume_speech()
                                 play_chime(rising=True)
+                                chat_tag = f"[{self.current_speech_item.chat_tag}] " if (self.current_speech_item and self.current_speech_item.chat_tag) else ""
+                                q_count = len(self.speech_queue)
+                                q_str = f" • Q:{q_count}" if q_count > 0 else ""
                                 if self.hud_enabled:
-                                    self.hud.set_status(f"AudioMind • Ch {cur_ch}/{tot_ch}: {title[:20]}", state="speaking")
+                                    self.hud.set_status(f"{chat_tag}Ch {cur_ch}/{tot_ch}: {title[:16]}{q_str}", state="speaking")
                                 print(f"[⏭️ VOICE COMMAND]: Skipped to Chapter {cur_ch}/{tot_ch} ({title}).")
                                 aec_stream.drain()
                                 self.model.reset()
@@ -1553,8 +1696,11 @@ class AntiTrayApp:
                                     if not is_speaking():
                                         resume_speech()
                                     play_chime(rising=True)
+                                    chat_tag = f"[{self.current_speech_item.chat_tag}] " if (self.current_speech_item and self.current_speech_item.chat_tag) else ""
+                                    q_count = len(self.speech_queue)
+                                    q_str = f" • Q:{q_count}" if q_count > 0 else ""
                                     if self.hud_enabled:
-                                        self.hud.set_status(f"AudioMind • Ch {cur_ch}/{tot_ch}: {title[:20]}", state="speaking")
+                                        self.hud.set_status(f"{chat_tag}Ch {cur_ch}/{tot_ch}: {title[:16]}{q_str}", state="speaking")
                                     print(f"[⏮️ VOICE COMMAND]: Repeated Chapter {cur_ch}/{tot_ch} ({title}).")
                                 elif self.last_spoken_summary:
                                     self.replay_last_response()
@@ -1569,7 +1715,7 @@ class AntiTrayApp:
                                     resume_speech()
                                 play_chime(rising=True)
                                 if self.hud_enabled:
-                                    self.hud.set_status("AudioMind • Rewound 5s", state="speaking")
+                                    self.hud.set_status("Rewound 5s", state="speaking")
                                 print(f"[⏪ VOICE COMMAND]: Rewound 5 seconds to {new_pos:.1f}s.")
                                 aec_stream.drain()
                                 self.model.reset()
@@ -1577,11 +1723,8 @@ class AntiTrayApp:
                                 continue
 
                             elif intent == "STOP":
-                                stop_speech()
+                                self.interrupt_speech()
                                 play_chime(rising=False)
-                                if self.hud_enabled:
-                                    self.hud.hide()
-                                self.set_tray_state("listening", "AudioMind: Listening for 'Hey Anti'")
                                 print(f"[⏹️ VOICE COMMAND]: Speech stopped by user request.")
                                 aec_stream.drain()
                                 self.model.reset()
@@ -1783,36 +1926,59 @@ class AntiTrayApp:
             time.sleep(1.5)
 
     def _start_hotkey_listener(self):
-        """Registers Ctrl+Alt+R global hotkey in a dedicated Win32 message pump thread."""
+        """Registers Ctrl+Alt+R (Read Highlight), Ctrl+Alt+M (Mute), and Ctrl+Alt+N (Skip Output) hotkeys."""
         def _listener():
             if sys.platform != "win32":
                 return
             user32 = ctypes.windll.user32
-            HOTKEY_ID = 2026
+            HOTKEY_READ = 2026
+            HOTKEY_MUTE = 2027
+            HOTKEY_SKIP = 2028
             MOD_ALT = 0x0001
             MOD_CONTROL = 0x0002
             VK_R = 0x52  # 'R' key
+            VK_M = 0x4D  # 'M' key
+            VK_N = 0x4E  # 'N' key
 
-            registered = user32.RegisterHotKey(None, HOTKEY_ID, MOD_CONTROL | MOD_ALT, VK_R)
-            if not registered:
-                print("[!] Global hotkey Ctrl+Alt+R could not be registered (already in use).")
-                return
-            print("[*] Global hotkey registered: Ctrl+Alt+R -> Read Highlighted Text")
+            if user32.RegisterHotKey(None, HOTKEY_READ, MOD_CONTROL | MOD_ALT, VK_R):
+                print("[*] Global hotkey registered: Ctrl+Alt+R -> Read Highlighted Text")
+            else:
+                print("[!] Global hotkey Ctrl+Alt+R could not be registered.")
+
+            if user32.RegisterHotKey(None, HOTKEY_MUTE, MOD_CONTROL | MOD_ALT, VK_M):
+                print("[*] Global hotkey registered: Ctrl+Alt+M -> Toggle Microphone Mute")
+            else:
+                print("[!] Global hotkey Ctrl+Alt+M could not be registered.")
+
+            if user32.RegisterHotKey(None, HOTKEY_SKIP, MOD_CONTROL | MOD_ALT, VK_N):
+                print("[*] Global hotkey registered: Ctrl+Alt+N -> Skip to Next Output")
+            else:
+                print("[!] Global hotkey Ctrl+Alt+N could not be registered.")
+
             try:
                 msg = wintypes.MSG()
                 while self.running:
                     res = user32.GetMessageW(ctypes.byref(msg), None, 0, 0)
                     if res <= 0:
                         break
-                    if msg.message == 0x0312 and msg.wParam == HOTKEY_ID:  # WM_HOTKEY
-                        print("[⌨️ GLOBAL HOTKEY]: Ctrl+Alt+R triggered -> Reading highlighted text.")
-                        self.read_highlighted_text()
+                    if msg.message == 0x0312:  # WM_HOTKEY
+                        if msg.wParam == HOTKEY_READ:
+                            print("[⌨️ GLOBAL HOTKEY]: Ctrl+Alt+R triggered -> Reading highlighted text.")
+                            self.read_highlighted_text()
+                        elif msg.wParam == HOTKEY_MUTE:
+                            print("[⌨️ GLOBAL HOTKEY]: Ctrl+Alt+M triggered -> Toggling microphone mute.")
+                            self.toggle_mute(None, None)
+                        elif msg.wParam == HOTKEY_SKIP:
+                            print("[⌨️ GLOBAL HOTKEY]: Ctrl+Alt+N triggered -> Skipping to next output.")
+                            self.skip_current_output()
                     user32.TranslateMessage(ctypes.byref(msg))
                     user32.DispatchMessageW(ctypes.byref(msg))
             except Exception as e:
                 print(f"[!] Hotkey listener error: {e}")
             finally:
-                user32.UnregisterHotKey(None, HOTKEY_ID)
+                user32.UnregisterHotKey(None, HOTKEY_READ)
+                user32.UnregisterHotKey(None, HOTKEY_MUTE)
+                user32.UnregisterHotKey(None, HOTKEY_SKIP)
 
         threading.Thread(target=_listener, daemon=True).start()
 
@@ -1827,11 +1993,15 @@ class AntiTrayApp:
         self._pulse_thread = threading.Thread(target=self._pulse_worker, daemon=True)
         self._pulse_thread.start()
 
+        # Launch speech queue worker for sequential response playback
+        self._speech_worker_thread = threading.Thread(target=self._speech_queue_worker, daemon=True)
+        self._speech_worker_thread.start()
+
         # Launch remote dispatch listener in dedicated daemon thread
         dispatch_thread = threading.Thread(target=self._remote_dispatch_worker, daemon=True)
         dispatch_thread.start()
 
-        # Launch global hotkey listener (Ctrl+Alt+R) for reading highlighted text anywhere
+        # Launch global hotkey listener (Ctrl+Alt+R, Ctrl+Alt+M, Ctrl+Alt+N)
         self._start_hotkey_listener()
 
         # Launch voice loop in dedicated daemon thread

@@ -48,6 +48,8 @@ class WaveformHud:
         self.bars = [3.0] * 7
         self._was_visible = False
         self.on_click = None
+        self.on_right_click = None
+        self.on_double_click = None
         self._thread = None
         self._lock = threading.Lock()
 
@@ -64,8 +66,8 @@ class WaveformHud:
         self.root.attributes("-topmost", True)
         self.root.attributes("-alpha", 0.0)  # Start hidden
 
-        # Micro-capsule dimensions
-        self.width = 240
+        # Micro-capsule dimensions (widened to 290px for chat tags and queue counters)
+        self.width = 290
         self.height = 34
 
         # Configure transparent-capable canvas
@@ -79,6 +81,10 @@ class WaveformHud:
         self.canvas.pack(fill="both", expand=True)
         self.canvas.bind("<Button-1>", self._on_canvas_click)
         self.root.bind("<Button-1>", self._on_canvas_click)
+        self.canvas.bind("<Button-3>", self._on_canvas_right_click)
+        self.root.bind("<Button-3>", self._on_canvas_right_click)
+        self.canvas.bind("<Double-Button-1>", self._on_canvas_double_click)
+        self.root.bind("<Double-Button-1>", self._on_canvas_double_click)
 
         self._update_geometry()
 
@@ -91,6 +97,29 @@ class WaveformHud:
         if self.on_click:
             try:
                 self.on_click()
+            except Exception:
+                pass
+        return "break"
+
+    def _on_canvas_right_click(self, event=None):
+        """Invoke on_right_click callback (e.g. skip output) when user right-clicks floating HUD."""
+        if self.on_right_click:
+            try:
+                self.on_right_click()
+            except Exception:
+                pass
+        return "break"
+
+    def _on_canvas_double_click(self, event=None):
+        """Invoke on_double_click callback (e.g. skip output) when user double-clicks floating HUD."""
+        if self.on_double_click:
+            try:
+                self.on_double_click()
+            except Exception:
+                pass
+        elif self.on_right_click:
+            try:
+                self.on_right_click()
             except Exception:
                 pass
         return "break"
@@ -222,31 +251,37 @@ class WaveformHud:
             bar_color1 = "#00e5ff"      # Cyan
             bar_color2 = "#7c4dff"      # Violet
             dot_color = "#00e676"       # Green (listening)
-            default_status = "AudioMind • Listening"
+            default_status = "Listening..."
         elif self.state == "speaking":
             glow_color = "#7c4dff"      # Violet
             bar_color1 = "#7c4dff"      # Violet
             bar_color2 = "#00e5ff"      # Cyan
             dot_color = "#00e5ff"       # Cyan
-            default_status = "AudioMind • Speaking"
+            default_status = "Speaking..."
         elif self.state == "paused":
             glow_color = "#ff9100"      # Orange
             bar_color1 = "#ffd600"      # Amber
             bar_color2 = "#ff9100"      # Gold
             dot_color = "#ffd600"       # Amber
-            default_status = "AudioMind • Paused"
+            default_status = "Paused"
         elif self.state in ("processing", "thinking"):
             glow_color = "#ffd600"      # Amber
             bar_color1 = "#ff9100"      # Orange
             bar_color2 = "#ffd600"      # Gold
             dot_color = "#ffd600"       # Amber
-            default_status = "AudioMind • Thinking"
+            default_status = "Thinking..."
+        elif self.state == "muted":
+            glow_color = "#484f58"
+            bar_color1 = "#6e7681"
+            bar_color2 = "#484f58"
+            dot_color = "#f85149"       # Red dot
+            default_status = "Mic Muted"
         else:
             glow_color = "#30363d"
             bar_color1 = "#58a6ff"
             bar_color2 = "#8b949e"
             dot_color = "#8b949e"
-            default_status = "AudioMind • Ready"
+            default_status = "Ready"
 
         bg = "#0c0e14"
 
@@ -263,16 +298,17 @@ class WaveformHud:
         dot_r = 3.2
         self.canvas.create_oval(dot_x - dot_r, dot_y - dot_r, dot_x + dot_r, dot_y + dot_r, fill=dot_color, outline="")
 
-        # 3. Text Label
+        # 3. Text Label (Streamlined, no redundant 'AudioMind •' prefix, fits chat tags + queue count)
         display_label = self.status_text
-        if ":" in display_label:
-            tag = display_label.split(":", 1)[1].strip()
-            display_label = f"AudioMind • {tag}"
-        elif display_label in ("AudioMind", "AudioMind is online", "Anti", "Anti is online"):
+        for prefix in ("AudioMind • ", "AudioMind: ", "Anti • ", "Anti: "):
+            if display_label.startswith(prefix):
+                display_label = display_label[len(prefix):].strip()
+
+        if display_label in ("AudioMind", "AudioMind is online", "Anti", "Anti is online", ""):
             display_label = default_status
 
-        if len(display_label) > 24:
-            display_label = display_label[:23] + "…"
+        if len(display_label) > 32:
+            display_label = display_label[:31] + "…"
 
         self.canvas.create_text(22, dot_y, text=display_label, fill="#e6edf3", font=("Segoe UI", 9, "bold"), anchor="w")
 

@@ -399,40 +399,73 @@ async def speak_async(
     kokoro = get_kokoro()
     if kokoro is not None:
         try:
-            pcm_chunks = []
-            titles = []
-            if len(chapters) > 1:
+            if len(chapters) > 1 and hasattr(global_player, "append_pcm"):
+                # Streaming chapter synthesis: Chapter 1 first for sub-1s Time-To-First-Audio (TTFA)
+                norm_c1 = normalize_phonetics(chapters[0][1])
+                c1_pcm = synth_kokoro_pcm(norm_c1, voice=voice)
+                if len(c1_pcm) > 0:
+                    global_player.play_pcm(
+                        c1_pcm,
+                        chapter_markers=[0],
+                        chapter_titles=[chapters[0][0]],
+                        stream_complete=False,
+                        on_start=on_start,
+                        on_level=on_level,
+                        on_finish=on_finish
+                    )
+                    # Synthesize subsequent chapters in-stride while Chapter 1 actively plays
+                    for i in range(1, len(chapters)):
+                        if hasattr(global_player, "is_active") and not global_player.is_active:
+                            break
+                        norm_body = normalize_phonetics(chapters[i][1])
+                        c_pcm = synth_kokoro_pcm(norm_body, voice=voice)
+                        if len(c_pcm) > 0:
+                            global_player.append_pcm(c_pcm, chapter_title=chapters[i][0], pause_sec=0.25)
+                    global_player.set_stream_complete(True)
+                    global_player.wait()
+                    return
+            elif len(chapters) > 1:
+                # Non-streaming batch fallback (for players without dynamic append support)
+                pcm_chunks = []
+                titles = []
                 for title, body in chapters:
                     norm_body = normalize_phonetics(body)
                     c_pcm = synth_kokoro_pcm(norm_body, voice=voice)
                     if len(c_pcm) > 0:
                         pcm_chunks.append(c_pcm)
                         titles.append(title)
+                if pcm_chunks:
+                    silence = np.zeros((int(0.25 * 48000), 2), dtype=np.float32)
+                    combined = []
+                    markers = []
+                    curr_s = 0
+                    for i, pcm in enumerate(pcm_chunks):
+                        markers.append(curr_s)
+                        combined.append(pcm)
+                        curr_s += len(pcm)
+                        if i < len(pcm_chunks) - 1:
+                            combined.append(silence)
+                            curr_s += len(silence)
+                    if combined:
+                        audio_f32 = np.concatenate(combined)
+                        global_player.play_pcm(
+                            audio_f32,
+                            chapter_markers=markers,
+                            chapter_titles=titles,
+                            on_start=on_start,
+                            on_level=on_level,
+                            on_finish=on_finish
+                        )
+                        global_player.wait()
+                        return
             else:
                 c_pcm = synth_kokoro_pcm(clean_text, voice=voice)
                 if len(c_pcm) > 0:
-                    pcm_chunks.append(c_pcm)
-                    titles.append(chapters[0][0] if chapters else "Overview")
-
-            if pcm_chunks:
-                silence = np.zeros((int(0.25 * 48000), 2), dtype=np.float32)
-                combined = []
-                markers = []
-                curr_s = 0
-                for i, pcm in enumerate(pcm_chunks):
-                    markers.append(curr_s)
-                    combined.append(pcm)
-                    curr_s += len(pcm)
-                    if i < len(pcm_chunks) - 1:
-                        combined.append(silence)
-                        curr_s += len(silence)
-
-                if combined:
-                    audio_f32 = np.concatenate(combined)
                     global_player.play_pcm(
-                        audio_f32,
-                        chapter_markers=markers,
-                        chapter_titles=titles,
+                        c_pcm,
+                        chapter_markers=[0],
+                        chapter_titles=[chapters[0][0] if chapters else "Overview"],
+                        stream_complete=True,
                         on_start=on_start,
                         on_level=on_level,
                         on_finish=on_finish
@@ -525,37 +558,26 @@ async def speak_async(
     # 3. Tier 3: Local Windows SAPI Offline Fallback (Immediate, Fail-Safe, 403-Immune)
     print("[!] Seamlessly using local Windows SAPI speech engine (offline fail-safe).")
     if len(chapters) > 1:
-        pcm_chunks = []
-        titles = []
-        for title, body in chapters:
-            c_pcm = synth_sapi_pcm(body)
-            if len(c_pcm) > 0:
-                pcm_chunks.append(c_pcm)
-                titles.append(title)
-        if pcm_chunks and len(pcm_chunks) == len(chapters):
-            silence = np.zeros((int(0.30 * 48000), 2), dtype=np.float32)
-            combined = []
-            markers = []
-            curr_s = 0
-            for i, pcm in enumerate(pcm_chunks):
-                markers.append(curr_s)
-                combined.append(pcm)
-                curr_s += len(pcm)
-                if i < len(pcm_chunks) - 1:
-                    combined.append(silence)
-                    curr_s += len(silence)
-            if combined:
-                audio_f32 = np.concatenate(combined)
-                global_player.play_pcm(
-                    audio_f32,
-                    chapter_markers=markers,
-                    chapter_titles=titles,
-                    on_start=on_start,
-                    on_level=on_level,
-                    on_finish=on_finish
-                )
-                global_player.wait()
-                return
+        c1_pcm = synth_sapi_pcm(chapters[0][1])
+        if len(c1_pcm) > 0:
+            global_player.play_pcm(
+                c1_pcm,
+                chapter_markers=[0],
+                chapter_titles=[chapters[0][0]],
+                stream_complete=False,
+                on_start=on_start,
+                on_level=on_level,
+                on_finish=on_finish
+            )
+            for i in range(1, len(chapters)):
+                if not is_speech_active():
+                    break
+                ci_pcm = synth_sapi_pcm(chapters[i][1])
+                if len(ci_pcm) > 0:
+                    global_player.append_pcm(ci_pcm, chapter_title=chapters[i][0], pause_sec=0.25)
+            global_player.set_stream_complete(True)
+            global_player.wait()
+            return
 
     sapi_pcm = synth_sapi_pcm(clean_text)
     if len(sapi_pcm) > 0:
@@ -563,6 +585,7 @@ async def speak_async(
             sapi_pcm,
             chapter_markers=[0],
             chapter_titles=[chapters[0][0] if chapters else "Overview"],
+            stream_complete=True,
             on_start=on_start,
             on_level=on_level,
             on_finish=on_finish
@@ -638,15 +661,24 @@ def get_chapter_info() -> tuple[int, int, str]:
 
 def is_speaking() -> bool:
     """Returns True if speech is actively audible."""
-    return global_player.is_playing
+    try:
+        return bool(getattr(global_player, "is_playing", False))
+    except Exception:
+        return False
 
 def is_paused() -> bool:
     """Returns True if speech is currently paused."""
-    return global_player.is_paused
+    try:
+        return bool(getattr(global_player, "is_paused", False))
+    except Exception:
+        return False
 
 def is_speech_active() -> bool:
     """Returns True if speech is either playing or paused."""
-    return global_player.is_active
+    try:
+        return bool(getattr(global_player, "is_active", False))
+    except Exception:
+        return False
 
 def get_speech_player() -> SpeechPlayer:
     """Returns the underlying SpeechPlayer instance."""
