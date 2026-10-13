@@ -16,7 +16,7 @@ The Antigravity Voice Assistant team takes security and user privacy seriously. 
 If you discover a security vulnerability, please do **NOT** open a public issue or discussion.
 
 Instead, please send a report to our private security contact:
-- **Email / Security Contact:** `<SECURITY_CONTACT>`
+- **Email / Security Contact:** Security@fieldsmith.pro
 
 ### What to Include in Your Report
 To help us triage and resolve the issue quickly, please include:
