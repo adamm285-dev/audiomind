@@ -3,12 +3,13 @@
 <!-- Read on Turn 1 boot. Strictly pruned after milestone completion. -->
 
 ## Current Objective
-- 10-Band Hi-Fi Digital Spectrum Analyzer & Elevated Ice (White) Palette.
+- AudioMind v1.1.0 Public Release: Desktop Cockpit Ergonomics & Session Intelligence.
 
 ## Status & Gate Verification
-- [x] 10-Band Hi-Fi Equalizer: Upgraded from 8 thin needles to 10 prominent rounded bars (3.5px wide, up to 24px tall) with smooth color interpolation, multi-frequency voice modeling, and fast-attack/analog decay ballistics.
-- [x] Elevated Ice Theme: Replaced dull gray with luminous snow white (`#ffffff`) and vibrant glacial sky blue (`#38bdf8`) for high contrast and vivid motion on dark LCD.
-- [x] Verification: 54/54 desktop tests passed, 7/7 relay tests passed. Topology & cartography verified. Synced to `adamm285-dev/audiomind` on `main`.
+- [x] Desktop HUD: Full mouse drag repositioning with snap-to-corner reset in system tray.
+- [x] Desktop HUD: One-click collapse to tray (▼) with automatic restoration on speech.
+- [x] Session Intelligence: Real-time chat title extraction and active application source tagging ([Chrome] • Reading Selection).
+- [x] Empirical Gates: 54/54 desktop tests, 7/7 relay tests, 28/28 Android unit tests passing. Gate T, M, L clean.
 
-## Immediate Next Action (Post-Compact)
-- Present elevated 10-band spectrum analyzer and ice theme preview to user.
+## Immediate Next Action
+- Push release branch to public repository (adamm285-dev/audiomind) and tag release upon user confirmation.

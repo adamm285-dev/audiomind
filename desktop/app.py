@@ -626,19 +626,79 @@ def check_elevation_mismatch(target_pid: int) -> tuple[bool, Optional[str]]:
         return (True, "Anti couldn't verify Antigravity's permissions, so nothing was typed.")
     return (False, None)
 
+def get_window_app_name(hwnd) -> str:
+    """Resolves friendly application name (e.g. Chrome, Edge, VS Code, Slack, Notepad) from HWND."""
+    if not hwnd:
+        return ""
+    try:
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if pid.value:
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            h_proc = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid.value)
+            if h_proc:
+                try:
+                    buf = ctypes.create_unicode_buffer(1024)
+                    size = wintypes.DWORD(1024)
+                    if kernel32.QueryFullProcessImageNameW(h_proc, 0, buf, ctypes.byref(size)):
+                        exe = os.path.basename(buf.value).lower()
+                        mapping = {
+                            "chrome.exe": "Chrome",
+                            "msedge.exe": "Edge",
+                            "code.exe": "VS Code",
+                            "slack.exe": "Slack",
+                            "discord.exe": "Discord",
+                            "notepad.exe": "Notepad",
+                            "antigravity ide.exe": "Antigravity",
+                            "firefox.exe": "Firefox",
+                            "devenv.exe": "Visual Studio",
+                            "windowsterminal.exe": "Terminal",
+                            "cmd.exe": "Command Prompt",
+                            "powershell.exe": "PowerShell",
+                            "explorer.exe": "File Explorer",
+                        }
+                        if exe in mapping:
+                            return mapping[exe]
+                        base, _ = os.path.splitext(exe)
+                        if base:
+                            return base.capitalize()
+                finally:
+                    kernel32.CloseHandle(h_proc)
+
+        # Fallback to window title
+        length = user32.GetWindowTextLengthW(hwnd)
+        if length > 0:
+            buff = ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(hwnd, buff, length + 1)
+            title = buff.value.strip()
+            if " - " in title:
+                parts = title.split(" - ")
+                candidate = parts[-1].strip()
+                if candidate and len(candidate) <= 16:
+                    return candidate
+            elif title:
+                words = title.split()
+                return " ".join(words[:2]) if len(words) > 2 else title
+    except Exception:
+        pass
+    return ""
+
 class SpeechQueueItem:
-    def __init__(self, text: str, filepath: Optional[str] = None, step_index: Optional[int] = None):
+    def __init__(self, text: str, filepath: Optional[str] = None, step_index: Optional[int] = None, chat_tag: Optional[str] = None):
         self.text = text
         self.filepath = filepath
         self.step_index = step_index
         self.created_at = time.time()
-        self.chat_tag = self._extract_chat_tag(filepath)
+        self.chat_tag = chat_tag if chat_tag is not None else self._extract_chat_tag(filepath)
 
     @staticmethod
     def _extract_chat_tag(filepath: Optional[str]) -> str:
         """
-        Resolves human-readable chat title from Antigravity's local SQLite database.
-        Returns concise 2-word title, or empty string if absent (avoids cryptic hex hashes).
+        Resolves human-readable chat title from Antigravity's local SQLite database
+        or fallback to the first user query / session ID.
+        Returns concise 2-word title, or clean Chat tag.
         """
         if not filepath:
             return ""
@@ -648,7 +708,7 @@ class SpeechQueueItem:
                 b_idx = norm.index("brain")
                 if b_idx + 1 < len(norm):
                     raw_id = norm[b_idx + 1].strip()
-                    # Query Antigravity's local SQLite database for the human chat title
+                    # 1. Query Antigravity's local SQLite database for the human chat title
                     db_path = os.path.expanduser(r"~/.gemini/antigravity/conversation_summaries.db")
                     if os.path.exists(db_path):
                         try:
@@ -667,6 +727,32 @@ class SpeechQueueItem:
                                     return short_title
                         except Exception:
                             pass
+
+                    # 2. Fallback: Parse first USER_INPUT from transcript.jsonl
+                    try:
+                        base_brain = os.path.expanduser(r"~/.gemini/antigravity/brain")
+                        transcript_path = os.path.join(base_brain, raw_id, ".system_generated", "logs", "transcript.jsonl")
+                        if os.path.exists(transcript_path):
+                            import json
+                            with open(transcript_path, "r", encoding="utf-8", errors="ignore") as f:
+                                for line in f:
+                                    line = line.strip()
+                                    if not line:
+                                        continue
+                                    obj = json.loads(line)
+                                    if obj.get("type") == "USER_INPUT":
+                                        content = obj.get("content", "").strip()
+                                        if content.startswith("<USER_REQUEST>"):
+                                            content = content[len("<USER_REQUEST>"):].strip()
+                                        words = content.split()
+                                        if words:
+                                            short_title = " ".join(words[:2])
+                                            if len(short_title) > 14:
+                                                short_title = short_title[:13] + "…"
+                                            return short_title
+                                        break
+                    except Exception:
+                        pass
         except Exception:
             pass
         return ""
@@ -710,6 +796,7 @@ class AntiTrayApp:
         # - Right-Click: Skip to next chapter (or next output if on final chapter)
         # - Double-Click: Skip entire response immediately to next output
         # - Transport Bar: [⏮] [⏪ 5s] [⏯] [⏩ 5s] [⏭] [⏹]
+        # - Collapse Button: [▼] (collapses straight to system tray)
         self.hud = WaveformHud()
         self.hud.on_click = self.toggle_speech_pause
         self.hud.on_right_click = self.skip_next_chapter
@@ -720,6 +807,9 @@ class AntiTrayApp:
         self.hud.on_forward_5 = self.forward_speech_5
         self.hud.on_next_chapter = self.skip_next_chapter
         self.hud.on_skip_output = self.skip_current_output
+        self.hud.on_collapse = self.collapse_hud_to_tray
+        self.hud_collapsed = False
+        self._last_read_app = ""
         self.hud.start()
 
         # Security & STT
@@ -742,27 +832,30 @@ class AntiTrayApp:
 
         # Wire speech player state changes to tray and HUD
         def _on_player_state(st: str):
-            chat_tag = f"[{self.current_speech_item.chat_tag}] " if (self.current_speech_item and self.current_speech_item.chat_tag) else ""
+            chat_tag = f"[{self.current_speech_item.chat_tag}] " if (self.current_speech_item and self.current_speech_item.chat_tag) else (f"[{self._last_read_app}] " if getattr(self, "_last_read_app", None) else "")
+            tag_label = f" ({self.current_speech_item.chat_tag})" if (self.current_speech_item and self.current_speech_item.chat_tag) else (f" ({self._last_read_app})" if getattr(self, "_last_read_app", None) else "")
             q_count = len(self.speech_queue)
             q_str = f" • Q:{q_count}" if q_count > 0 else ""
 
             if st == "paused":
-                self.set_tray_state("paused", "AudioMind: Speech Paused (Click to Resume)")
-                if self.hud_enabled:
+                self.set_tray_state("paused", f"AudioMind: Speech Paused{tag_label} (Click to Resume)")
+                if self.hud_enabled and not self.hud_collapsed:
                     self.hud.set_status(f"{chat_tag}Paused{q_str}", state="paused")
             elif st == "playing":
-                self.set_tray_state("anti_speaking", "AudioMind: Speaking...")
+                self.set_tray_state("anti_speaking", f"AudioMind: Speaking{tag_label}...")
                 if self.hud_enabled:
+                    # When playing resumes, bring HUD back up even if it was previously collapsed
+                    self.hud_collapsed = False
                     self.hud.show(state="speaking", status=f"{chat_tag}Speaking{q_str}")
             elif st == "rewound":
-                if self.hud_enabled:
+                if self.hud_enabled and not self.hud_collapsed:
                     self.hud.set_status(f"{chat_tag}Rewound 5s{q_str}", state="speaking" if is_speaking() else "paused")
             elif st == "forwarded":
-                if self.hud_enabled:
+                if self.hud_enabled and not self.hud_collapsed:
                     self.hud.set_status(f"{chat_tag}Forward 5s{q_str}", state="speaking" if is_speaking() else "paused")
             elif st in ("chapter_skipped", "chapter_repeated"):
                 cur_ch, tot_ch, title = get_chapter_info()
-                if self.hud_enabled:
+                if self.hud_enabled and not self.hud_collapsed:
                     self.hud.set_status(f"{chat_tag}Ch {cur_ch}/{tot_ch}: {title[:16]}{q_str}", state="speaking" if is_speaking() else "paused")
             elif st in ("stopped", "finished"):
                 if len(self.speech_queue) == 0:
@@ -863,6 +956,7 @@ class AntiTrayApp:
             item("🔇  Mute Microphone  (Ctrl+Alt+M)", self.toggle_mute, checked=lambda item: self.muted),
             item("🌊  Desktop Waveform HUD", self.toggle_hud, checked=lambda item: self.hud_enabled),
             item("📌  Dock Waveform to Bottom-Right", self.toggle_hud_dock, checked=lambda item: self.hud.position == "bottom_right"),
+            item("📌  Reset HUD Position (Snap to Corner)", getattr(self, "reset_hud_position", lambda: None)),
             item("📱  Remote Assistant Dispatch Listener", self.toggle_remote_listener, checked=lambda item: self.remote_poll_enabled),
             pystray.Menu.SEPARATOR,
             item("👋  Test Voice Greeting", self.test_greeting),
@@ -884,6 +978,7 @@ class AntiTrayApp:
             item(lambda it: f"⏮️  Previous Output (Go Back)" if len(self.output_history) > 1 else "⏮️  Replay Last Output  (Ctrl+Alt+P)", self.go_back_output, enabled=lambda it: len(self.output_history) > 0 or bool(self.last_spoken_summary)),
             item("⏹️  Stop Speaking / Interrupt", self.interrupt_speech, enabled=lambda it: is_speech_active() or len(self.speech_queue) > 0),
             item("📖  Read Highlighted Text  (Ctrl+Alt+R)", self.read_highlighted_text),
+            item(lambda it: "🔼  Show Cockpit HUD" if getattr(self, "hud_collapsed", False) or not getattr(getattr(self, "hud", None), "visible", True) else "🔽  Collapse HUD to Tray", getattr(self, "toggle_hud_collapse", lambda: None), enabled=lambda it: getattr(self, "hud_enabled", True)),
             pystray.Menu.SEPARATOR,
             item("🗣️  Voice Selection", pystray.Menu(
                 item("Heart • Warm & Natural (Default)", lambda: self.set_voice_model("af_heart", "Heart"), checked=lambda it: get_default_voice() == "af_heart"),
@@ -956,6 +1051,47 @@ class AntiTrayApp:
             except Exception:
                 time.sleep(0.5)
 
+    def _format_status_with_chat(self, action: str, extra: str = "") -> str:
+        """Helper to prefix HUD status with active chat session tag or application name."""
+        tag = ""
+        if self.current_speech_item and self.current_speech_item.chat_tag:
+            tag = f"[{self.current_speech_item.chat_tag}] "
+        elif getattr(self, "_last_read_app", None):
+            tag = f"[{self._last_read_app}] "
+        q_count = len(self.speech_queue)
+        q_str = f" • Q:{q_count}" if q_count > 0 else ""
+        if extra:
+            return f"{tag}{action} {extra}{q_str}"
+        return f"{tag}{action}{q_str}"
+
+    def collapse_hud_to_tray(self, icon=None, item=None):
+        """Collapse and hide HUD directly into system tray."""
+        self.hud_collapsed = True
+        self.hud.hide()
+        print("[*] Waveform HUD collapsed to System Tray.")
+
+    def restore_hud(self, icon=None, item=None):
+        """Restore and show HUD from system tray."""
+        self.hud_collapsed = False
+        if is_speech_active():
+            st = "paused" if is_paused() else "speaking"
+            self.hud.show(state=st, status=self._format_status_with_chat("Paused" if is_paused() else "Speaking"))
+        else:
+            self.hud.show(state="idle", status="AudioMind • Ready")
+        print("[*] Waveform HUD restored from System Tray.")
+
+    def toggle_hud_collapse(self, icon=None, item=None):
+        """Toggle HUD collapse state."""
+        if self.hud_collapsed or not self.hud.visible:
+            self.restore_hud()
+        else:
+            self.collapse_hud_to_tray()
+
+    def reset_hud_position(self, icon=None, item=None):
+        """Snap HUD back to default position above taskbar."""
+        self.hud.reset_position()
+        print("[*] Waveform HUD position reset to default corner.")
+
     def toggle_auto_submit(self, icon=None, item=None):
         self.auto_submit = not self.auto_submit
         print(f"[*] Auto-Submit Voice to Chat: {self.auto_submit}")
@@ -973,32 +1109,35 @@ class AntiTrayApp:
     def toggle_speech_pause(self, icon=None, item=None):
         paused = toggle_pause()
         print(f"[*] Speech Pause Toggled: now {'PAUSED' if paused else 'PLAYING'}")
-        if self.hud_enabled:
+        if not paused:
+            self.hud_collapsed = False
+        if self.hud_enabled and (not self.hud_collapsed or not paused):
             if paused:
-                self.hud.set_status("AudioMind • Paused", state="paused")
+                self.hud.set_status(self._format_status_with_chat("Paused"), state="paused")
             else:
-                self.hud.set_status("AudioMind • Speaking", state="speaking")
+                self.hud.show(state="speaking", status=self._format_status_with_chat("Speaking"))
+        tag_label = f" ({self.current_speech_item.chat_tag})" if (self.current_speech_item and self.current_speech_item.chat_tag) else (f" ({self._last_read_app})" if getattr(self, "_last_read_app", None) else "")
         if paused:
-            self.set_tray_state("paused", "AudioMind: Speech Paused (Click to Resume)")
+            self.set_tray_state("paused", f"AudioMind: Speech Paused{tag_label} (Click to Resume)")
         else:
-            self.set_tray_state("anti_speaking", "AudioMind: Speaking...")
+            self.set_tray_state("anti_speaking", f"AudioMind: Speaking{tag_label}...")
 
     def forward_speech_5(self, icon=None, item=None):
         new_pos = fast_forward_speech(5.0)
-        if self.hud_enabled:
-            self.hud.set_status("AudioMind • Forward 5s", state="speaking" if is_speaking() else "paused")
+        if self.hud_enabled and not self.hud_collapsed:
+            self.hud.set_status(self._format_status_with_chat("Forward 5s"), state="speaking" if is_speaking() else "paused")
         print(f"[*] Speech Forwarded 5s -> position: {new_pos:.1f}s")
 
     def rewind_speech_5(self, icon=None, item=None):
         new_pos = rewind_speech(5.0)
-        if self.hud_enabled:
-            self.hud.set_status("AudioMind • Rewound 5s", state="speaking" if is_speaking() else "paused")
+        if self.hud_enabled and not self.hud_collapsed:
+            self.hud.set_status(self._format_status_with_chat("Rewound 5s"), state="speaking" if is_speaking() else "paused")
         print(f"[*] Speech Rewound 5s -> position: {new_pos:.1f}s")
 
     def rewind_speech_10(self, icon=None, item=None):
         new_pos = rewind_speech(10.0)
-        if self.hud_enabled:
-            self.hud.set_status("AudioMind • Rewound 10s", state="speaking" if is_speaking() else "paused")
+        if self.hud_enabled and not self.hud_collapsed:
+            self.hud.set_status(self._format_status_with_chat("Rewound 10s"), state="speaking" if is_speaking() else "paused")
         print(f"[*] Speech Rewound 10s -> position: {new_pos:.1f}s")
 
     def skip_next_chapter(self, icon=None, item=None):
@@ -1155,17 +1294,20 @@ class AntiTrayApp:
                 capture_highlighted_text = lambda target_hwnd: None
 
         target_hwnd = getattr(self, "last_app_hwnd", None)
+        app_name = get_window_app_name(target_hwnd)
+        self._last_read_app = app_name
+        tag_str = f"[{app_name}] " if app_name else ""
         text = capture_highlighted_text(target_hwnd)
         if text and text.strip():
-            print(f"\n[📖 READ HIGHLIGHTED TEXT]: Captured {len(text.split())} words: \"{text[:60]}...\"")
-            if self.hud_enabled:
-                self.hud.show(state="speaking", status="AudioMind • Reading Selection")
-            self.set_tray_state("anti_speaking", "AudioMind: Reading Selection...")
+            print(f"\n[📖 READ HIGHLIGHTED TEXT]: App='{app_name or 'unknown'}' Captured {len(text.split())} words: \"{text[:60]}...\"")
+            if self.hud_enabled and not self.hud_collapsed:
+                self.hud.show(state="speaking", status=f"{tag_str}Reading Selection")
+            self.set_tray_state("anti_speaking", f"AudioMind: Reading {tag_str}Selection...")
 
             def _on_start():
-                if self.hud_enabled:
-                    self.hud.show(state="speaking", status="AudioMind • Reading Selection")
-                self.set_tray_state("anti_speaking", "AudioMind: Reading Selection...")
+                if self.hud_enabled and not self.hud_collapsed:
+                    self.hud.show(state="speaking", status=f"{tag_str}Reading Selection")
+                self.set_tray_state("anti_speaking", f"AudioMind: Reading {tag_str}Selection...")
 
             def _on_lvl(lvl: float):
                 if self.hud_enabled and is_speaking():
@@ -1180,9 +1322,9 @@ class AntiTrayApp:
                     if is_speaking():
                         pass
                     elif is_paused():
-                        if self.hud_enabled:
-                            self.hud.set_status("AudioMind • Paused", state="paused")
-                        self.set_tray_state("paused", "AudioMind: Speech Paused")
+                        if self.hud_enabled and not self.hud_collapsed:
+                            self.hud.set_status(f"{tag_str}Paused", state="paused")
+                        self.set_tray_state("paused", f"AudioMind: Speech Paused ({app_name or 'Selection'})")
                     else:
                         if self.hud_enabled:
                             self.hud.hide()
@@ -1312,9 +1454,8 @@ class AntiTrayApp:
         if is_paused():
             print("[⚡ NEW RESPONSE ARRIVED WHILE PAUSED]: Automatically advancing to newly arrived output.")
             stop_speech()
-        elif is_speaking() and self.hud_enabled:
-            chat_tag = f"[{self.current_speech_item.chat_tag}]" if (self.current_speech_item and self.current_speech_item.chat_tag) else ""
-            self.hud.set_status(chat_tag or "Speaking", state="speaking")
+        elif is_speaking() and self.hud_enabled and not self.hud_collapsed:
+            self.hud.set_status(self._format_status_with_chat("Speaking"), state="speaking")
 
         # Wake worker loop
         self._speech_worker_event.set()
@@ -1341,14 +1482,14 @@ class AntiTrayApp:
 
                 print(f"\n[🔊 ASSISTANT RESPONSE]: Chat={item.chat_tag or 'unknown'} ({q_count} queued)")
                 self.set_tray_state("anti_speaking", f"AudioMind: Preparing {chat_prefix}audio...")
-                if self.hud_enabled:
+                if self.hud_enabled and not self.hud_collapsed:
                     self.hud.show(state="thinking", status=f"{chat_prefix}Preparing...{q_str}")
 
                 def _on_playback_start():
                     q_now = len(self.speech_queue)
                     q_now_str = f" • Q:{q_now}" if q_now > 0 else ""
-                    self.set_tray_state("anti_speaking", "AudioMind: Speaking...")
-                    if self.hud_enabled:
+                    self.set_tray_state("anti_speaking", f"AudioMind: Speaking ({item.chat_tag or 'Assistant'})...")
+                    if self.hud_enabled and not self.hud_collapsed:
                         self.hud.show(state="speaking", status=f"{chat_prefix}Speaking{q_now_str}")
 
                 def _on_level(level: float):
@@ -1367,8 +1508,8 @@ class AntiTrayApp:
                     if is_speaking():
                         pass
                     elif is_paused():
-                        if self.hud_enabled:
-                            self.hud.set_status("Paused", state="paused")
+                        if self.hud_enabled and not self.hud_collapsed:
+                            self.hud.set_status(self._format_status_with_chat("Paused"), state="paused")
                         self.set_tray_state("paused", "AudioMind: Speech Paused")
                     else:
                         if self.hud_enabled:
@@ -1879,9 +2020,10 @@ class AntiTrayApp:
                             if intent == "PAUSE":
                                 pause_speech()
                                 play_chime(rising=False)
-                                self.set_tray_state("paused", "AudioMind: Speech Paused (Click to Resume)")
-                                if self.hud_enabled:
-                                    self.hud.set_status("Paused", state="paused")
+                                tag_label = f" ({self.current_speech_item.chat_tag})" if (self.current_speech_item and self.current_speech_item.chat_tag) else (f" ({self._last_read_app})" if getattr(self, "_last_read_app", None) else "")
+                                self.set_tray_state("paused", f"AudioMind: Speech Paused{tag_label} (Click to Resume)")
+                                if self.hud_enabled and not self.hud_collapsed:
+                                    self.hud.set_status(self._format_status_with_chat("Paused"), state="paused")
                                 print(f"[⏸️ VOICE COMMAND]: Speech paused by user request.")
                                 aec_stream.drain()
                                 self.model.reset()
@@ -1891,9 +2033,11 @@ class AntiTrayApp:
                             elif intent == "RESUME":
                                 resume_speech()
                                 play_chime(rising=True)
-                                self.set_tray_state("anti_speaking", "AudioMind: Speaking...")
+                                self.hud_collapsed = False
+                                tag_label = f" ({self.current_speech_item.chat_tag})" if (self.current_speech_item and self.current_speech_item.chat_tag) else (f" ({self._last_read_app})" if getattr(self, "_last_read_app", None) else "")
+                                self.set_tray_state("anti_speaking", f"AudioMind: Speaking{tag_label}...")
                                 if self.hud_enabled:
-                                    self.hud.set_status("Speaking...", state="speaking")
+                                    self.hud.set_status(self._format_status_with_chat("Speaking"), state="speaking")
                                 print(f"[▶️ VOICE COMMAND]: Speech resumed by user request.")
                                 aec_stream.drain()
                                 self.model.reset()
@@ -1920,9 +2064,8 @@ class AntiTrayApp:
                                 if not is_speaking():
                                     resume_speech()
                                 play_chime(rising=True)
-                                chat_tag = f"[{self.current_speech_item.chat_tag}]" if (self.current_speech_item and self.current_speech_item.chat_tag) else ""
-                                if self.hud_enabled:
-                                    self.hud.set_status(chat_tag or "Speaking", state="speaking")
+                                if self.hud_enabled and not self.hud_collapsed:
+                                    self.hud.set_status(self._format_status_with_chat(f"Ch {cur_ch}/{tot_ch}: {title[:16]}"), state="speaking")
                                 print(f"[⏭️ VOICE COMMAND]: Skipped to Chapter {cur_ch}/{tot_ch} ({title}).")
                                 aec_stream.drain()
                                 self.model.reset()
@@ -1941,8 +2084,8 @@ class AntiTrayApp:
                                 if not is_speaking():
                                     resume_speech()
                                 play_chime(rising=True)
-                                if self.hud_enabled:
-                                    self.hud.set_status("Rewound 5s", state="speaking")
+                                if self.hud_enabled and not self.hud_collapsed:
+                                    self.hud.set_status(self._format_status_with_chat("Rewound 5s"), state="speaking")
                                 print(f"[⏪ VOICE COMMAND]: Rewound 5 seconds to {new_pos:.1f}s.")
                                 aec_stream.drain()
                                 self.model.reset()

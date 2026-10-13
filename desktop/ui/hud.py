@@ -111,6 +111,21 @@ class WaveformHud:
         self._thread = None
         self._lock = threading.Lock()
 
+        # Free draggability & custom position caching
+        self.custom_x = None
+        self.custom_y = None
+        self._current_x = 0
+        self._current_y = 0
+        self._drag_start_x = 0
+        self._drag_start_y = 0
+        self._drag_start_win_x = 0
+        self._drag_start_win_y = 0
+        self._drag_has_moved = False
+        self._drag_press_event = None
+
+        # Collapse callback (e.g. collapse straight to tray)
+        self.on_collapse = None
+
     def set_theme(self, theme: str):
         """Set active color theme for the HUD ('cyberpunk', 'matrix', 'sunset', 'violet', 'ice')."""
         with self._lock:
@@ -139,8 +154,15 @@ class WaveformHud:
 
         self.canvas = tk.Canvas(self.root, width=self.width, height=self.height, bg="#010409", highlightthickness=0, cursor="hand2")
         self.canvas.pack(fill="both", expand=True)
-        self.canvas.bind("<Button-1>", self._on_canvas_click)
-        self.root.bind("<Button-1>", self._on_canvas_click)
+
+        # Mouse press, drag motion, and release for fluid draggability without click collision
+        self.canvas.bind("<ButtonPress-1>", self._on_button_press)
+        self.root.bind("<ButtonPress-1>", self._on_button_press)
+        self.canvas.bind("<B1-Motion>", self._on_b1_motion)
+        self.root.bind("<B1-Motion>", self._on_b1_motion)
+        self.canvas.bind("<ButtonRelease-1>", self._on_button_release)
+        self.root.bind("<ButtonRelease-1>", self._on_button_release)
+
         self.canvas.bind("<Button-3>", self._on_canvas_right_click)
         self.root.bind("<Button-3>", self._on_canvas_right_click)
         self.canvas.bind("<Double-Button-1>", self._on_canvas_double_click)
@@ -202,6 +224,16 @@ class WaveformHud:
             defs.append((btn_id, icon, bx1, bx2))
         return defs
 
+    def _hit_test_collapse(self, x, y):
+        """Hit-test (x, y) coordinates against the top-right collapse button."""
+        w = self.width
+        if not (w - 38 <= x <= w - 10):
+            return False
+        if self.height >= 60:
+            return 12 <= y <= 38
+        else:
+            return 6 <= y <= 32
+
     def _hit_test_button(self, x, y):
         """Hit-test (x, y) coordinates against Row 2 CD-player transport buttons."""
         if self.height < 60:
@@ -213,67 +245,122 @@ class WaveformHud:
                 return btn_id
         return None
 
+    def _on_button_press(self, event=None):
+        if event:
+            self._drag_start_x = event.x_root
+            self._drag_start_y = event.y_root
+            self._drag_has_moved = False
+            self._drag_press_event = event
+            self._drag_start_win_x = self.custom_x if self.custom_x is not None else self._current_x
+            self._drag_start_win_y = self.custom_y if self.custom_y is not None else self._current_y
+
+    def _on_b1_motion(self, event=None):
+        if not event or not self.root:
+            return
+        dx = event.x_root - self._drag_start_x
+        dy = event.y_root - self._drag_start_y
+        if abs(dx) > 3 or abs(dy) > 3:
+            self._drag_has_moved = True
+            left, top, right, bottom = get_primary_work_area()
+            target_x = self._drag_start_win_x + dx
+            target_y = self._drag_start_win_y + dy
+            # Clamp within work area bounds so HUD stays fully visible
+            target_x = max(left, min(right - self.width, target_x))
+            target_y = max(top, min(bottom - self.height, target_y))
+            self.custom_x = target_x
+            self.custom_y = target_y
+            self._current_x = target_x
+            self._current_y = target_y
+            try:
+                self.root.geometry(f"{self.width}x{self.height}+{target_x}+{target_y}")
+                hwnd = int(self.root.wm_frame(), 16)
+                user32 = ctypes.windll.user32
+                SWP_NOACTIVATE = 0x0010
+                SWP_SHOWWINDOW = 0x0040
+                HWND_TOPMOST = -1
+                user32.SetWindowPos(hwnd, HWND_TOPMOST, target_x, target_y, self.width, self.height, SWP_NOACTIVATE | SWP_SHOWWINDOW)
+            except Exception:
+                pass
+
+    def _on_button_release(self, event=None):
+        if self._drag_has_moved:
+            self._drag_has_moved = False
+            return "break"
+        evt = self._drag_press_event or event
+        return self._on_canvas_click(evt)
+
     def _on_canvas_click(self, event=None):
-        """Invoke button transport callback or general on_click (play/pause toggle)."""
-        if event and self.height >= 50:
-            btn = self._hit_test_button(event.x, event.y)
-            if btn == "prev":
-                if self.on_prev_chapter:
+        """Invoke button transport callback, collapse callback, or general on_click (play/pause toggle)."""
+        if event:
+            if self._hit_test_collapse(event.x, event.y):
+                if self.on_collapse:
                     try:
-                        self.on_prev_chapter()
+                        self.on_collapse()
                     except Exception:
                         pass
-                elif self.on_click:
-                    try:
-                        self.on_click()
-                    except Exception:
-                        pass
+                else:
+                    self.hide()
                 return "break"
-            elif btn == "rewind":
-                if self.on_rewind_5:
-                    try:
-                        self.on_rewind_5()
-                    except Exception:
-                        pass
-                return "break"
-            elif btn == "play_pause":
-                if self.on_play_pause:
-                    try:
-                        self.on_play_pause()
-                    except Exception:
-                        pass
-                elif self.on_click:
-                    try:
-                        self.on_click()
-                    except Exception:
-                        pass
-                return "break"
-            elif btn == "forward":
-                if self.on_forward_5:
-                    try:
-                        self.on_forward_5()
-                    except Exception:
-                        pass
-                return "break"
-            elif btn == "next":
-                if self.on_next_chapter:
-                    try:
-                        self.on_next_chapter()
-                    except Exception:
-                        pass
-                return "break"
-            elif btn == "skip":
-                if self.on_skip_output:
-                    try:
-                        self.on_skip_output()
-                    except Exception:
-                        pass
-                elif self.on_double_click:
-                    try:
-                        self.on_double_click()
-                    except Exception:
-                        pass
-                return "break"
+
+            if self.height >= 50:
+                btn = self._hit_test_button(event.x, event.y)
+                if btn == "prev":
+                    if self.on_prev_chapter:
+                        try:
+                            self.on_prev_chapter()
+                        except Exception:
+                            pass
+                    elif self.on_click:
+                        try:
+                            self.on_click()
+                        except Exception:
+                            pass
+                    return "break"
+                elif btn == "rewind":
+                    if self.on_rewind_5:
+                        try:
+                            self.on_rewind_5()
+                        except Exception:
+                            pass
+                    return "break"
+                elif btn == "play_pause":
+                    if self.on_play_pause:
+                        try:
+                            self.on_play_pause()
+                        except Exception:
+                            pass
+                    elif self.on_click:
+                        try:
+                            self.on_click()
+                        except Exception:
+                            pass
+                    return "break"
+                elif btn == "forward":
+                    if self.on_forward_5:
+                        try:
+                            self.on_forward_5()
+                        except Exception:
+                            pass
+                    return "break"
+                elif btn == "next":
+                    if self.on_next_chapter:
+                        try:
+                            self.on_next_chapter()
+                        except Exception:
+                            pass
+                    return "break"
+                elif btn == "skip":
+                    if self.on_skip_output:
+                        try:
+                            self.on_skip_output()
+                        except Exception:
+                            pass
+                    elif self.on_double_click:
+                        try:
+                            self.on_double_click()
+                        except Exception:
+                            pass
+                    return "break"
 
         # General click on top row / background or compact mode
         if self.on_click:
@@ -317,8 +404,20 @@ class WaveformHud:
         self._check_expansion()
 
     def _on_mouse_move(self, event=None):
-        if not event or self.height < 60:
+        if not event:
             return
+        if self._hit_test_collapse(event.x, event.y):
+            if self.hovered_button != "collapse":
+                self.hovered_button = "collapse"
+                self._hover_hint = "▼  COLLAPSE TO TRAY"
+            return
+
+        if self.height < 60:
+            if self.hovered_button:
+                self.hovered_button = None
+                self._hover_hint = None
+            return
+
         btn = self._hit_test_button(event.x, event.y)
         if btn != self.hovered_button:
             self.hovered_button = btn
@@ -354,13 +453,20 @@ class WaveformHud:
 
         left, top, right, bottom = get_primary_work_area()
 
-        if self.position == "bottom_center":
+        if self.custom_x is not None and self.custom_y is not None:
+            x = self.custom_x
+            y = self.custom_y
+            x = max(left, min(right - self.width, x))
+            y = max(top, min(bottom - self.height, y))
+        elif self.position == "bottom_center":
             x = left + ((right - left) - self.width) // 2
             y = bottom - self.height - 12
         else:  # "bottom_right" (above system tray clock)
             x = right - self.width - 20
             y = bottom - self.height - 12
 
+        self._current_x = x
+        self._current_y = y
         self.root.geometry(f"{self.width}x{self.height}+{x}+{y}")
 
         # Position precisely via Win32 without stealing focus
@@ -376,6 +482,54 @@ class WaveformHud:
             user32.SetWindowPos(hwnd, HWND_TOPMOST, x, y, self.width, self.height, SWP_NOACTIVATE | SWP_SHOWWINDOW)
         except Exception:
             pass
+
+    def reset_position(self):
+        """Reset custom drag position and snap back to default screen corner."""
+        with self._lock:
+            self.custom_x = None
+            self.custom_y = None
+        if self.root:
+            self.root.after(0, self._update_geometry)
+
+    def collapse(self):
+        """Collapse and hide HUD directly to tray."""
+        if self.on_collapse:
+            try:
+                self.on_collapse()
+            except Exception:
+                pass
+        else:
+            self.hide()
+
+    def format_lcd_label(self, label: str, default_status: str = "Ready") -> str:
+        """
+        Formats LCD display text to cleanly present [Chat Tag] • Status or App name.
+        Avoids stripping status text while preventing horizontal overflow.
+        """
+        if not label:
+            return default_status
+
+        for prefix in ("AudioMind • ", "AudioMind: ", "Anti • ", "Anti: "):
+            if label.startswith(prefix):
+                label = label[len(prefix):].strip()
+
+        if label in ("AudioMind", "AudioMind is online", "Anti", "Anti is online", ""):
+            return default_status
+
+        if label.startswith("[") and "]" in label:
+            end_b = label.find("]")
+            tag_part = label[:end_b + 1].strip()
+            rest = label[end_b + 1:].strip()
+            if rest:
+                if rest.startswith("• "):
+                    rest = rest[2:].strip()
+                label = f"{tag_part} • {rest}"
+            else:
+                label = f"{tag_part} • {default_status}"
+
+        if len(label) > 42:
+            label = label[:41] + "…"
+        return label
 
     def set_position(self, pos: str):
         """Toggle position between 'bottom_right' and 'bottom_center'."""
@@ -551,30 +705,28 @@ class WaveformHud:
                 display_label = self._hover_hint
                 txt_fill = glow_color
             else:
-                display_label = self.status_text
-                for prefix in ("AudioMind • ", "AudioMind: ", "Anti • ", "Anti: "):
-                    if display_label.startswith(prefix):
-                        display_label = display_label[len(prefix):].strip()
-
-                if display_label in ("AudioMind", "AudioMind is online", "Anti", "Anti is online", ""):
-                    display_label = default_status
-
-                # Strip everything after bracketed chat name if present (e.g. "[Open Source] Ch 1/3: Intro • Q:2" -> "[Open Source]")
-                if display_label.startswith("[") and "]" in display_label:
-                    end_b = display_label.find("]")
-                    display_label = display_label[:end_b + 1]
-
-                if len(display_label) > 42:
-                    display_label = display_label[:41] + "…"
+                display_label = self.format_lcd_label(self.status_text, default_status)
                 txt_fill = "#e6edf3"
 
             self.canvas.create_text(34, dot_y, text=display_label, fill=txt_fill, font=("Segoe UI", 9, "bold"), anchor="w")
 
-            # Right side inside LCD screen: EQ Spectrum Analyzer or Status Icons
+            # Top-Right Collapse to Tray Button
+            col_x1 = w - 34
+            col_x2 = w - 14
+            col_y1 = 15
+            col_y2 = 35
+            col_hover = (self.hovered_button == "collapse")
+            col_bg = "#222d3d" if col_hover else "#0d131d"
+            col_border = glow_color if col_hover else "#212b3d"
+            col_txt = glow_color if col_hover else "#8b949e"
+            self._draw_rounded_rect(col_x1, col_y1, col_x2, col_y2, 4, fill=col_bg, outline=col_border, width=1)
+            self.canvas.create_text((col_x1 + col_x2) / 2, (col_y1 + col_y2) / 2, text="▼", fill=col_txt, font=("Segoe UI Symbol", 8, "bold"))
+
+            # Right side inside LCD screen: EQ Spectrum Analyzer or Status Icons (positioned safely before collapse button)
             if self.state in ("processing", "thinking"):
                 num_dots = 3
                 dot_spacing = 9
-                start_dot_x = w - 44
+                start_dot_x = w - 68
                 for i in range(num_dots):
                     pulse = (math.sin(self.phase * 3.6 - i * 0.9) + 1.0) / 2.0
                     r = 1.8 + pulse * 1.6
@@ -585,8 +737,8 @@ class WaveformHud:
                 # Two crisp paused vertical bars || in amber
                 pause_w = 3.0
                 pause_h = 13.0
-                p1_x = w - 34
-                p2_x = w - 26
+                p1_x = w - 52
+                p2_x = w - 44
                 self.canvas.create_line(p1_x, dot_y - pause_h/2, p1_x, dot_y + pause_h/2, fill="#ffd600", width=pause_w, capstyle="round")
                 self.canvas.create_line(p2_x, dot_y - pause_h/2, p2_x, dot_y + pause_h/2, fill="#ffd600", width=pause_w, capstyle="round")
             else:
@@ -595,7 +747,7 @@ class WaveformHud:
                 bar_w = 3.5
                 spacing = 4.5
                 total_bars_w = num_bars * bar_w + (num_bars - 1) * spacing
-                start_x = w - total_bars_w - 20
+                start_x = w - total_bars_w - 44
 
                 with self._lock:
                     target_level = self.audio_level
@@ -680,27 +832,25 @@ class WaveformHud:
             dot_r = 3.5
             self.canvas.create_oval(dot_x - dot_r, dot_y - dot_r, dot_x + dot_r, dot_y + dot_r, fill=dot_color, outline="")
 
-            display_label = self.status_text
-            for prefix in ("AudioMind • ", "AudioMind: ", "Anti • ", "Anti: "):
-                if display_label.startswith(prefix):
-                    display_label = display_label[len(prefix):].strip()
-
-            if display_label in ("AudioMind", "AudioMind is online", "Anti", "Anti is online", ""):
-                display_label = default_status
-
-            if display_label.startswith("[") and "]" in display_label:
-                end_b = display_label.find("]")
-                display_label = display_label[:end_b + 1]
-
-            if len(display_label) > 42:
-                display_label = display_label[:41] + "…"
-
+            display_label = self.format_lcd_label(self.status_text, default_status)
             self.canvas.create_text(32, dot_y, text=display_label, fill="#e6edf3", font=("Segoe UI", 9, "bold"), anchor="w")
+
+            # Top-Right Collapse to Tray Button
+            col_x1 = w - 34
+            col_x2 = w - 14
+            col_y1 = 9
+            col_y2 = 29
+            col_hover = (self.hovered_button == "collapse")
+            col_bg = "#222d3d" if col_hover else "#0d131d"
+            col_border = glow_color if col_hover else "#212b3d"
+            col_txt = glow_color if col_hover else "#8b949e"
+            self._draw_rounded_rect(col_x1, col_y1, col_x2, col_y2, 4, fill=col_bg, outline=col_border, width=1)
+            self.canvas.create_text((col_x1 + col_x2) / 2, (col_y1 + col_y2) / 2, text="▼", fill=col_txt, font=("Segoe UI Symbol", 8, "bold"))
 
             if self.state in ("processing", "thinking"):
                 num_dots = 3
                 dot_spacing = 9
-                start_dot_x = w - 44
+                start_dot_x = w - 68
                 for i in range(num_dots):
                     pulse = (math.sin(self.phase * 3.6 - i * 0.9) + 1.0) / 2.0
                     r = 1.8 + pulse * 1.6
@@ -710,8 +860,8 @@ class WaveformHud:
             elif self.state == "paused":
                 pause_w = 3.0
                 pause_h = 13.0
-                p1_x = w - 34
-                p2_x = w - 26
+                p1_x = w - 52
+                p2_x = w - 44
                 self.canvas.create_line(p1_x, dot_y - pause_h/2, p1_x, dot_y + pause_h/2, fill="#ffd600", width=pause_w, capstyle="round")
                 self.canvas.create_line(p2_x, dot_y - pause_h/2, p2_x, dot_y + pause_h/2, fill="#ffd600", width=pause_w, capstyle="round")
             else:
@@ -719,7 +869,7 @@ class WaveformHud:
                 bar_w = 3.0
                 spacing = 3.5
                 total_bars_w = num_bars * bar_w + (num_bars - 1) * spacing
-                start_x = w - total_bars_w - 20
+                start_x = w - total_bars_w - 44
 
                 with self._lock:
                     target_level = self.audio_level
