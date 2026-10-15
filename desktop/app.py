@@ -148,7 +148,7 @@ except ImportError:
 # Audio Hardware & Synthesis Modules
 try:
     from desktop.audio.wasapi_stream import WasapiAecStream
-    from desktop.audio.chime import play_chime, play_submit_chime
+    from desktop.audio.chime import play_chime, play_submit_chime, play_seek_chime
     from desktop.audio.tts import (
         speak, stop_speech, pause_speech, resume_speech, 
         toggle_pause, rewind_speech, fast_forward_speech,
@@ -160,7 +160,7 @@ try:
 except ImportError:
     try:
         from audio.wasapi_stream import WasapiAecStream
-        from audio.chime import play_chime, play_submit_chime
+        from audio.chime import play_chime, play_submit_chime, play_seek_chime
         from audio.tts import (
             speak, stop_speech, pause_speech, resume_speech, 
             toggle_pause, rewind_speech, fast_forward_speech,
@@ -173,6 +173,7 @@ except ImportError:
         WasapiAecStream = None
         play_chime = None
         play_submit_chime = None
+        play_seek_chime = None
         speak = None
         stop_speech = None
         pause_speech = None
@@ -1112,6 +1113,9 @@ class AntiTrayApp:
         if not paused:
             self.hud_collapsed = False
         if self.hud_enabled and (not self.hud_collapsed or not paused):
+            toast = "⏸  Speech Paused" if paused else "▶  Speech Resumed"
+            if hasattr(self.hud, "flash_action"):
+                self.hud.flash_action(toast, duration_sec=1.2)
             if paused:
                 self.hud.set_status(self._format_status_with_chat("Paused"), state="paused")
             else:
@@ -1122,23 +1126,125 @@ class AntiTrayApp:
         else:
             self.set_tray_state("anti_speaking", f"AudioMind: Speaking{tag_label}...")
 
+    def _restore_hud_status_after_delay(self, delay: float = 2.0):
+        time.sleep(delay)
+        if getattr(self, "hud_enabled", False) and not getattr(self, "hud_collapsed", False) and is_speech_active():
+            cur_ch, tot_ch, title = get_chapter_info()
+            chat_tag = f"[{self.current_speech_item.chat_tag}] " if (self.current_speech_item and self.current_speech_item.chat_tag) else (f"[{self._last_read_app}] " if getattr(self, "_last_read_app", None) else "")
+            q_count = len(self.speech_queue)
+            q_str = f" • Q:{q_count}" if q_count > 0 else ""
+            state = "paused" if is_paused() else "speaking"
+            if tot_ch > 1:
+                label = f"{chat_tag}Ch {cur_ch}/{tot_ch}: {title[:16]}{q_str}"
+            else:
+                label = f"{chat_tag}{'Paused' if is_paused() else 'Speaking'}{q_str}"
+            self.hud.set_status(label, state=state)
+
     def forward_speech_5(self, icon=None, item=None):
+        if not is_speech_active():
+            if getattr(self, "hud_enabled", False) and not getattr(self, "hud_collapsed", False):
+                if hasattr(self.hud, "flash_action"):
+                    self.hud.flash_action("⚠️  No Active Speech", duration_sec=1.2)
+            return
+        player = get_speech_player()
+        old_pos = player.position_seconds if player else 0.0
+        dur = player.duration_seconds if player else 0.0
+
+        # If already at or very near the end of audio (< 0.5s left) and queued outputs exist, advance
+        if dur > 0 and (old_pos >= dur - 0.5) and len(self.speech_queue) > 0:
+            print("[⏩ FORWARD 5s]: At end of current audio with queued outputs -> advancing")
+            self.skip_current_output()
+            return
+
         new_pos = fast_forward_speech(5.0)
-        if self.hud_enabled and not self.hud_collapsed:
-            self.hud.set_status(self._format_status_with_chat("Forward 5s"), state="speaking" if is_speaking() else "paused")
-        print(f"[*] Speech Forwarded 5s -> position: {new_pos:.1f}s")
+        if play_seek_chime:
+            try:
+                play_seek_chime(forward=True)
+            except Exception:
+                pass
+
+        pos_m, pos_s = int(new_pos // 60), int(new_pos % 60)
+        pos_str = f"{pos_m}:{pos_s:02d}"
+        if dur > 0:
+            dur_m, dur_s = int(dur // 60), int(dur % 60)
+            dur_str = f"{dur_m}:{dur_s:02d}"
+            toast = f"⏩  Forward +5s  ({pos_str} / {dur_str})"
+        else:
+            toast = f"⏩  Forward +5s  ({pos_str})"
+
+        if getattr(self, "hud_enabled", False) and not getattr(self, "hud_collapsed", False):
+            if hasattr(self.hud, "flash_action"):
+                self.hud.flash_action(toast, duration_sec=1.4)
+            self.hud.set_status(self._format_status_with_chat(f"Forward +5s ({pos_str})"), state="speaking" if is_speaking() else "paused")
+            if hasattr(self, "_restore_hud_status_after_delay"):
+                threading.Thread(target=self._restore_hud_status_after_delay, args=(2.0,), daemon=True).start()
+        print(f"[*] Speech Forwarded 5s -> {old_pos:.1f}s to {new_pos:.1f}s (duration: {dur:.1f}s)")
 
     def rewind_speech_5(self, icon=None, item=None):
+        if not is_speech_active():
+            if getattr(self, "hud_enabled", False) and not getattr(self, "hud_collapsed", False):
+                if hasattr(self.hud, "flash_action"):
+                    self.hud.flash_action("⚠️  No Active Speech", duration_sec=1.2)
+            return
+        player = get_speech_player()
+        old_pos = player.position_seconds if player else 0.0
+        dur = player.duration_seconds if player else 0.0
         new_pos = rewind_speech(5.0)
-        if self.hud_enabled and not self.hud_collapsed:
-            self.hud.set_status(self._format_status_with_chat("Rewound 5s"), state="speaking" if is_speaking() else "paused")
-        print(f"[*] Speech Rewound 5s -> position: {new_pos:.1f}s")
+        if play_seek_chime:
+            try:
+                play_seek_chime(forward=False)
+            except Exception:
+                pass
+
+        pos_m, pos_s = int(new_pos // 60), int(new_pos % 60)
+        pos_str = f"{pos_m}:{pos_s:02d}"
+        if dur > 0:
+            dur_m, dur_s = int(dur // 60), int(dur % 60)
+            dur_str = f"{dur_m}:{dur_s:02d}"
+            toast = f"⏪  Rewind -5s  ({pos_str} / {dur_str})"
+        else:
+            toast = f"⏪  Rewind -5s  ({pos_str})"
+
+        if getattr(self, "hud_enabled", False) and not getattr(self, "hud_collapsed", False):
+            if hasattr(self.hud, "flash_action"):
+                self.hud.flash_action(toast, duration_sec=1.4)
+            self.hud.set_status(self._format_status_with_chat(f"Rewind -5s ({pos_str})"), state="speaking" if is_speaking() else "paused")
+            if hasattr(self, "_restore_hud_status_after_delay"):
+                threading.Thread(target=self._restore_hud_status_after_delay, args=(2.0,), daemon=True).start()
+        print(f"[*] Speech Rewound 5s -> {old_pos:.1f}s to {new_pos:.1f}s (duration: {dur:.1f}s)")
 
     def rewind_speech_10(self, icon=None, item=None):
+        if not is_speech_active():
+            if getattr(self, "hud_enabled", False) and not getattr(self, "hud_collapsed", False):
+                if hasattr(self.hud, "flash_action"):
+                    self.hud.flash_action("⚠️  No Active Speech", duration_sec=1.2)
+            return
+        player = get_speech_player()
+        old_pos = player.position_seconds if player else 0.0
+        dur = player.duration_seconds if player else 0.0
         new_pos = rewind_speech(10.0)
-        if self.hud_enabled and not self.hud_collapsed:
-            self.hud.set_status(self._format_status_with_chat("Rewound 10s"), state="speaking" if is_speaking() else "paused")
-        print(f"[*] Speech Rewound 10s -> position: {new_pos:.1f}s")
+        if play_seek_chime:
+            try:
+                play_seek_chime(forward=False)
+            except Exception:
+                pass
+
+        pos_m, pos_s = int(new_pos // 60), int(new_pos % 60)
+        pos_str = f"{pos_m}:{pos_s:02d}"
+        if dur > 0:
+            dur_m, dur_s = int(dur // 60), int(dur % 60)
+            dur_str = f"{dur_m}:{dur_s:02d}"
+            toast = f"⏪  Rewind -10s  ({pos_str} / {dur_str})"
+        else:
+            toast = f"⏪  Rewind -10s  ({pos_str})"
+
+        if getattr(self, "hud_enabled", False) and not getattr(self, "hud_collapsed", False):
+            if hasattr(self.hud, "flash_action"):
+                self.hud.flash_action(toast, duration_sec=1.4)
+            self.hud.set_status(self._format_status_with_chat(f"Rewind -10s ({pos_str})"), state="speaking" if is_speaking() else "paused")
+            if hasattr(self, "_restore_hud_status_after_delay"):
+                threading.Thread(target=self._restore_hud_status_after_delay, args=(2.0,), daemon=True).start()
+        print(f"[*] Speech Rewound 10s -> {old_pos:.1f}s to {new_pos:.1f}s (duration: {dur:.1f}s)")
 
     def skip_next_chapter(self, icon=None, item=None):
         """

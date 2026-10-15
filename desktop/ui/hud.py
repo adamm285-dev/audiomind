@@ -126,6 +126,17 @@ class WaveformHud:
         # Collapse callback (e.g. collapse straight to tray)
         self.on_collapse = None
 
+        # Tactile button pressing & high-priority action flash feedback
+        self.pressed_button = None
+        self._action_toast = None
+        self._action_toast_until = 0.0
+
+    def flash_action(self, toast_text: str, duration_sec: float = 1.4):
+        """Display an immediate high-priority action confirmation toast on the LCD, superseding hover hints."""
+        with self._lock:
+            self._action_toast = toast_text
+            self._action_toast_until = time.time() + duration_sec
+
     def set_theme(self, theme: str):
         """Set active color theme for the HUD ('cyberpunk', 'matrix', 'sunset', 'violet', 'ice')."""
         with self._lock:
@@ -253,6 +264,12 @@ class WaveformHud:
             self._drag_press_event = event
             self._drag_start_win_x = self.custom_x if self.custom_x is not None else self._current_x
             self._drag_start_win_y = self.custom_y if self.custom_y is not None else self._current_y
+            if self._hit_test_collapse(event.x, event.y):
+                self.pressed_button = "collapse"
+            elif self.height >= 50:
+                self.pressed_button = self._hit_test_button(event.x, event.y)
+            else:
+                self.pressed_button = None
 
     def _on_b1_motion(self, event=None):
         if not event or not self.root:
@@ -261,6 +278,7 @@ class WaveformHud:
         dy = event.y_root - self._drag_start_y
         if abs(dx) > 3 or abs(dy) > 3:
             self._drag_has_moved = True
+            self.pressed_button = None
             left, top, right, bottom = get_primary_work_area()
             target_x = self._drag_start_win_x + dx
             target_y = self._drag_start_win_y + dy
@@ -283,6 +301,7 @@ class WaveformHud:
                 pass
 
     def _on_button_release(self, event=None):
+        self.pressed_button = None
         if self._drag_has_moved:
             self._drag_has_moved = False
             return "break"
@@ -701,7 +720,15 @@ class WaveformHud:
             self.canvas.create_oval(dot_x - dot_r, dot_y - dot_r, dot_x + dot_r, dot_y + dot_r, fill=dot_color, outline="")
 
             # LCD Text Display
-            if self._hover_hint:
+            now = time.time()
+            with self._lock:
+                toast_active = bool(self._action_toast and now < self._action_toast_until)
+                toast_msg = self._action_toast if toast_active else None
+
+            if toast_msg:
+                display_label = toast_msg
+                txt_fill = glow_color
+            elif self._hover_hint:
                 display_label = self._hover_hint
                 txt_fill = glow_color
             else:
@@ -716,11 +743,24 @@ class WaveformHud:
             col_y1 = 15
             col_y2 = 35
             col_hover = (self.hovered_button == "collapse")
-            col_bg = "#222d3d" if col_hover else "#0d131d"
-            col_border = glow_color if col_hover else "#212b3d"
-            col_txt = glow_color if col_hover else "#8b949e"
+            col_pressed = (self.pressed_button == "collapse")
+            if col_pressed:
+                col_bg = "#2f415c"
+                col_border = "#ffffff"
+                col_txt = "#ffffff"
+                col_cy = (col_y1 + col_y2) / 2 + 1
+            elif col_hover:
+                col_bg = "#222d3d"
+                col_border = glow_color
+                col_txt = glow_color
+                col_cy = (col_y1 + col_y2) / 2
+            else:
+                col_bg = "#0d131d"
+                col_border = "#212b3d"
+                col_txt = "#8b949e"
+                col_cy = (col_y1 + col_y2) / 2
             self._draw_rounded_rect(col_x1, col_y1, col_x2, col_y2, 4, fill=col_bg, outline=col_border, width=1)
-            self.canvas.create_text((col_x1 + col_x2) / 2, (col_y1 + col_y2) / 2, text="▼", fill=col_txt, font=("Segoe UI Symbol", 8, "bold"))
+            self.canvas.create_text((col_x1 + col_x2) / 2, col_cy, text="▼", fill=col_txt, font=("Segoe UI Symbol", 8, "bold"))
 
             # Right side inside LCD screen: EQ Spectrum Analyzer or Status Icons (positioned safely before collapse button)
             if self.state in ("processing", "thinking"):
@@ -801,11 +841,18 @@ class WaveformHud:
 
             for btn_id, icon, bx1, bx2 in btn_defs:
                 is_btn_hover = (self.hovered_button == btn_id)
+                is_btn_pressed = (self.pressed_button == btn_id)
 
-                if is_btn_hover:
+                if is_btn_pressed:
+                    btn_fill = "#2f415c"
+                    btn_border = "#ffffff"
+                    txt_fill = "#ffffff"
+                    draw_cy = cy + 1
+                elif is_btn_hover:
                     btn_fill = "#222d3d"
                     btn_border = glow_color
                     txt_fill = glow_color
+                    draw_cy = cy
                 elif btn_id == "play_pause":
                     # Center Play/Pause button styling
                     if self.state == "paused":
@@ -816,14 +863,16 @@ class WaveformHud:
                         btn_fill = "#1b2535"
                         btn_border = glow_color
                         txt_fill = glow_color
+                    draw_cy = cy
                 else:
                     btn_fill = "#161c26"
                     btn_border = "#2b3648"
                     txt_fill = "#e6edf3"
+                    draw_cy = cy
 
                 self._draw_rounded_rect(bx1, btn_y1, bx2, btn_y2, 5, fill=btn_fill, outline=btn_border, width=1)
                 font_spec = ("Segoe UI Symbol", 9, "bold") if ("5s" in icon or "Skip" in icon) else ("Segoe UI Symbol", 11)
-                self.canvas.create_text((bx1 + bx2) / 2, cy, text=icon, fill=txt_fill, font=font_spec)
+                self.canvas.create_text((bx1 + bx2) / 2, draw_cy, text=icon, fill=txt_fill, font=font_spec)
 
         else:
             # === COMPACT PILL MODE (h = 38) ===
@@ -832,8 +881,18 @@ class WaveformHud:
             dot_r = 3.5
             self.canvas.create_oval(dot_x - dot_r, dot_y - dot_r, dot_x + dot_r, dot_y + dot_r, fill=dot_color, outline="")
 
-            display_label = self.format_lcd_label(self.status_text, default_status)
-            self.canvas.create_text(32, dot_y, text=display_label, fill="#e6edf3", font=("Segoe UI", 9, "bold"), anchor="w")
+            now = time.time()
+            with self._lock:
+                toast_active = bool(self._action_toast and now < self._action_toast_until)
+                toast_msg = self._action_toast if toast_active else None
+
+            if toast_msg:
+                display_label = toast_msg
+                txt_fill = glow_color
+            else:
+                display_label = self.format_lcd_label(self.status_text, default_status)
+                txt_fill = "#e6edf3"
+            self.canvas.create_text(32, dot_y, text=display_label, fill=txt_fill, font=("Segoe UI", 9, "bold"), anchor="w")
 
             # Top-Right Collapse to Tray Button
             col_x1 = w - 34
@@ -841,11 +900,24 @@ class WaveformHud:
             col_y1 = 9
             col_y2 = 29
             col_hover = (self.hovered_button == "collapse")
-            col_bg = "#222d3d" if col_hover else "#0d131d"
-            col_border = glow_color if col_hover else "#212b3d"
-            col_txt = glow_color if col_hover else "#8b949e"
+            col_pressed = (self.pressed_button == "collapse")
+            if col_pressed:
+                col_bg = "#2f415c"
+                col_border = "#ffffff"
+                col_txt = "#ffffff"
+                col_cy = (col_y1 + col_y2) / 2 + 1
+            elif col_hover:
+                col_bg = "#222d3d"
+                col_border = glow_color
+                col_txt = glow_color
+                col_cy = (col_y1 + col_y2) / 2
+            else:
+                col_bg = "#0d131d"
+                col_border = "#212b3d"
+                col_txt = "#8b949e"
+                col_cy = (col_y1 + col_y2) / 2
             self._draw_rounded_rect(col_x1, col_y1, col_x2, col_y2, 4, fill=col_bg, outline=col_border, width=1)
-            self.canvas.create_text((col_x1 + col_x2) / 2, (col_y1 + col_y2) / 2, text="▼", fill=col_txt, font=("Segoe UI Symbol", 8, "bold"))
+            self.canvas.create_text((col_x1 + col_x2) / 2, col_cy, text="▼", fill=col_txt, font=("Segoe UI Symbol", 8, "bold"))
 
             if self.state in ("processing", "thinking"):
                 num_dots = 3

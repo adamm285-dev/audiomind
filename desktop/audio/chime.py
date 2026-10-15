@@ -39,3 +39,11 @@ def play_chime(rising: bool = True):
         play_wake_chime()
     else:
         play_quarantine_chime()
+
+def play_seek_chime(forward: bool = True):
+    """Crisp high-speed tick/chirp indicating forward or rewind seek."""
+    if forward:
+        _beep_async([(988, 30), (1318, 40)])  # B5 -> E6 quick forward chirp
+    else:
+        _beep_async([(1318, 30), (988, 40)])  # E6 -> B5 quick rewind chirp
+

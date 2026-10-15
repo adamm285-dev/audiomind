@@ -1013,6 +1013,119 @@ def test_output_history_multi_step_back_navigation(monkeypatch):
     assert len(app.output_history) == 20
 
 
+def test_forward_and_rewind_player_playback():
+    """Verify SpeechPlayer.fast_forward advances current_idx by exact sample count and clamps safely."""
+    from desktop.audio.player import SpeechPlayer
+    import numpy as np
+
+    player = SpeechPlayer(samplerate=48000)
+    # 10 seconds of audio = 480,000 samples
+    dummy_audio = np.zeros((480000, 2), dtype=np.float32)
+    player.play_pcm(dummy_audio)
+
+    assert player.current_idx == 0
+    assert player.position_seconds == 0.0
+    assert player.duration_seconds == 10.0
+
+    # Forward 5 seconds -> advances to 240,000 samples (5.0s)
+    pos = player.fast_forward(5.0)
+    assert pos == 5.0
+    assert player.current_idx == 240000
+
+    # Rewind 2 seconds -> rewinds to 144,000 samples (3.0s)
+    pos = player.rewind(2.0)
+    assert pos == 3.0
+    assert player.current_idx == 144000
+
+    # Forward 5 seconds again -> 384,000 samples (8.0s)
+    pos = player.fast_forward(5.0)
+    assert pos == 8.0
+    assert player.current_idx == 384000
+
+    # Forward 5 seconds past end -> clamps at duration (480,000 samples, 10.0s)
+    pos = player.fast_forward(5.0)
+    assert pos == 10.0
+    assert player.current_idx == 480000
+
+    player.stop()
+
+
+def test_hud_flash_action_precedence_over_hover():
+    """Verify that flash_action toast supersedes hover hints so clicking gives immediate visual confirmation."""
+    from desktop.ui.hud import WaveformHud
+    import time
+
+    hud = WaveformHud()
+    hud._hover_hint = "⏩  FORWARD 5 SECONDS"
+    hud.status_text = "[Test Chat] • Speaking"
+
+    # Before flashing, hover hint is displayed
+    with hud._lock:
+        now = time.time()
+        toast_active = bool(hud._action_toast and now < hud._action_toast_until)
+    assert not toast_active
+
+    # Trigger action toast
+    hud.flash_action("⏩  Forward +5s  (0:05 / 0:10)", duration_sec=1.5)
+
+    with hud._lock:
+        now = time.time()
+        toast_active = bool(hud._action_toast and now < hud._action_toast_until)
+        assert toast_active
+        assert hud._action_toast == "⏩  Forward +5s  (0:05 / 0:10)"
+
+
+def test_forward_speech_5_app_method(monkeypatch):
+    """Verify AntiTrayApp.forward_speech_5 triggers player skip, flashes toast, and updates HUD."""
+    import desktop.app as app_module
+
+    class DummyApp:
+        def __init__(self):
+            self.hud_enabled = True
+            self.hud_collapsed = False
+            self.speech_queue = []
+            self.current_speech_item = type("Item", (), {"chat_tag": "TestChat"})()
+            self._last_read_app = ""
+            self.flashed_toast = None
+            self.hud_status = None
+
+            class MockHud:
+                def __init__(self, outer):
+                    self.outer = outer
+                def flash_action(self, toast, duration_sec=1.4):
+                    self.outer.flashed_toast = toast
+                def set_status(self, text, state="speaking"):
+                    self.outer.hud_status = (text, state)
+
+            self.hud = MockHud(self)
+
+        def _format_status_with_chat(self, text):
+            return f"[{self.current_speech_item.chat_tag}] • {text}"
+
+        def skip_current_output(self): pass
+
+    app = DummyApp()
+
+    # Mock player position and duration
+    class MockPlayer:
+        position_seconds = 2.0
+        duration_seconds = 20.0
+    monkeypatch.setattr(app_module, "get_speech_player", lambda: MockPlayer())
+    monkeypatch.setattr(app_module, "is_speech_active", lambda: True)
+    monkeypatch.setattr(app_module, "is_speaking", lambda: True)
+    monkeypatch.setattr(app_module, "fast_forward_speech", lambda sec: 7.0)
+
+    chimes_played = []
+    monkeypatch.setattr(app_module, "play_seek_chime", lambda forward=True: chimes_played.append(forward))
+
+    app_module.AntiTrayApp.forward_speech_5(app)
+
+    assert chimes_played == [True]
+    assert app.flashed_toast == "⏩  Forward +5s  (0:07 / 0:20)"
+    assert app.hud_status[0] == "[TestChat] • Forward +5s (0:07)"
+
+
+
 
 
 
