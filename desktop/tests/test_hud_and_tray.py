@@ -1125,6 +1125,176 @@ def test_forward_speech_5_app_method(monkeypatch):
     assert app.hud_status[0] == "[TestChat] • Forward +5s (0:07)"
 
 
+def test_highlighted_text_not_interrupted_by_assistant_response(monkeypatch):
+    """Verify that an incoming assistant response does NOT interrupt or truncate active highlighted text reading."""
+    import threading
+    import desktop.app as app_module
+    from desktop.app import SpeechQueueItem
+
+    stopped = []
+    monkeypatch.setattr(app_module, "stop_speech", lambda: stopped.append(True))
+    monkeypatch.setattr(app_module, "is_speech_active", lambda: True)
+    monkeypatch.setattr(app_module, "is_paused", lambda: False)
+    monkeypatch.setattr(app_module, "get_chapter_info", lambda: (1, 1, "Selection"))
+
+    class DummyApp:
+        def __init__(self):
+            self.auto_read = True
+            self.speech_queue = []
+            self.output_history = []
+            self.history_cursor = -1
+            self.current_speech_item = SpeechQueueItem("Highlighted clip", chat_tag="Chrome Selection")
+            self._last_read_app = "Chrome"
+            self.is_reading_highlight = True
+            self.hud_enabled = True
+            self.hud_collapsed = False
+            self.hud_status = None
+            self._speak_lock = threading.Lock()
+
+            class MockHud:
+                def __init__(self, outer):
+                    self.outer = outer
+                def set_status(self, text, state="speaking"):
+                    self.outer.hud_status = (text, state)
+
+            self.hud = MockHud(self)
+
+    app = DummyApp()
+
+    # When an assistant response arrives while is_reading_highlight is True and speech is active
+    app_module.AntiTrayApp._on_assistant_response(app, "Assistant reply content", filepath=r"C:\test\log.jsonl", step_index=2)
+
+    # 1. Active speech MUST NOT be stopped
+    assert len(stopped) == 0, "stop_speech() was unexpectedly called while reading highlighted text!"
+
+    # 2. Assistant response MUST be queued behind the highlighted text
+    assert len(app.speech_queue) == 1
+    assert app.speech_queue[0].text == "Assistant reply content"
+
+    # 3. HUD status reflects queued item without preempting highlighted text
+    assert "• Q:1" in app.hud_status[0]
+
+
+def test_skip_next_chapter_on_final_chapter_does_not_abort_playback(monkeypatch):
+    """Verify that skip_next_chapter on the final chapter preserves audio and does not abruptly terminate playback."""
+    import desktop.app as app_module
+    import numpy as np
+    from desktop.audio.player import SpeechPlayer
+
+    # 1. Test underlying SpeechPlayer: 3 chapters, on chapter 3 (index 2)
+    player = SpeechPlayer(samplerate=48000)
+    sr = 48000
+    pcm = np.zeros((30 * sr, 2), dtype=np.float32)
+    player.play_pcm(pcm, chapter_markers=[0, 10 * sr, 20 * sr], chapter_titles=["Ch 1", "Ch 2", "Ch 3"])
+    player.current_idx = 21 * sr  # playing in Chapter 3
+    player._is_playing = True
+    player._is_paused = False
+
+    assert player.current_chapter_index == 2
+    assert player.total_chapters == 3
+
+    # Skipping on final chapter should NOT set current_idx = len(audio_data) (which kills audio)
+    player.skip_to_next_chapter()
+    assert player.is_active is True
+    assert player.current_idx < len(player.audio_data)
+    player.stop()
+
+    # 2. Test AntiTrayApp UI coordination:
+    class DummyApp:
+        def __init__(self):
+            self.hud_enabled = True
+            self.hud_collapsed = False
+            self.speech_queue = []
+            self.current_speech_item = type("Item", (), {"chat_tag": "TestChat"})()
+            self._last_read_app = ""
+            self.flashed_toast = None
+            self.skipped_output = False
+
+            class MockHud:
+                def __init__(self, outer):
+                    self.outer = outer
+                def flash_action(self, toast, duration_sec=1.4):
+                    self.outer.flashed_toast = toast
+                def set_status(self, text, state="speaking"): pass
+
+            self.hud = MockHud(self)
+
+        def skip_current_output(self, icon=None, item=None):
+            self.skipped_output = True
+
+    app = DummyApp()
+    monkeypatch.setattr(app_module, "is_speech_active", lambda: True)
+    monkeypatch.setattr(app_module, "get_chapter_info", lambda: (3, 3, "Final Section"))
+
+    # When no outputs queued: does not skip output, informs user on HUD
+    app_module.AntiTrayApp.skip_next_chapter(app)
+    assert app.skipped_output is False
+    assert app.flashed_toast == "ℹ️  Final Chapter (3/3)"
+
+    # When outputs ARE queued: advances to next output
+    app.speech_queue.append("queued_item")
+    app_module.AntiTrayApp.skip_next_chapter(app)
+    assert app.skipped_output is True
+
+
+def test_enhanced_extract_chapters_bullet_bold_and_horizontal_rules():
+    """Verify that extract_chapters_from_text segments bold bullet lists, horizontal rules, and numbered lists."""
+    from desktop.audio.tts import extract_chapters_from_text
+
+    # 1. Bold bullet points (* **Topic**: or - **Topic**:)
+    text_bullets = (
+        "* **Architecture Overview**: Here is how the system is laid out.\n\n"
+        "* **Transport Engine**: Detailed explanation of the audio pipeline.\n\n"
+        "* **Verification**: Automated test results and validation."
+    )
+    chs_b = extract_chapters_from_text(text_bullets)
+    assert len(chs_b) == 3
+    assert [c[0] for c in chs_b] == ["Architecture Overview", "Transport Engine", "Verification"]
+
+    # 2. Horizontal rule dividers (---)
+    text_hr = (
+        "This is the opening summary section with important context.\n\n"
+        "---\n\n"
+        "This is the second section after the horizontal rule with deep dive details."
+    )
+    chs_hr = extract_chapters_from_text(text_hr)
+    assert len(chs_hr) >= 2
+
+    # 3. Numbered lists with titles
+    text_num = (
+        "1. **Initial Assessment**: Evaluating system state.\n\n"
+        "2. **Implementation**: Applying code mutations.\n\n"
+        "3. **Verification**: Running test gates."
+    )
+    chs_num = extract_chapters_from_text(text_num)
+    assert len(chs_num) == 3
+    assert [c[0] for c in chs_num] == ["Initial Assessment", "Implementation", "Verification"]
+
+
+def test_capture_highlighted_text_preserves_raw_markdown_structure(monkeypatch):
+    """Verify capture_highlighted_text returns raw text so chapter parsing can segment headings."""
+    from desktop.audio.read_aloud import capture_highlighted_text
+    from desktop.audio.tts import extract_chapters_from_text
+    import pyperclip
+
+    sample_md = (
+        "# First Section\nOverview of the captured documentation.\n\n"
+        "# Second Section\nDetailed code snippets and parameters."
+    )
+    monkeypatch.setattr(pyperclip, "paste", lambda: sample_md)
+    monkeypatch.setattr(pyperclip, "copy", lambda text: None)
+
+    res = capture_highlighted_text(target_hwnd=None)
+    assert res == sample_md
+
+    # When passed to chapter extraction, 2 distinct chapters are extracted
+    chapters = extract_chapters_from_text(res)
+    assert len(chapters) == 2
+    assert chapters[0][0] == "First Section"
+    assert chapters[1][0] == "Second Section"
+
+
+
 
 
 

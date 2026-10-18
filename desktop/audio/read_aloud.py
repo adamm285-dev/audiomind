@@ -182,7 +182,7 @@ def truncate_for_audio_summary(cleaned_text: str, max_words: int = 1200) -> str:
             plan_sentences = re.split(r'(?<=[.!?])\s+', last_sec)
             summary_parts.append(' '.join(plan_sentences[:4]).strip())
 
-        candidate = ' '.join(summary_parts).strip()
+        candidate = '\n\n'.join(summary_parts).strip()
         if len(candidate.split()) <= max_words + 200:
             return candidate
 
@@ -283,7 +283,7 @@ def capture_highlighted_text(target_hwnd: Optional[int] = None) -> Optional[str]
             pass
 
     if new_clip and new_clip != sentinel and new_clip.strip():
-        return clean_markdown_for_speech(new_clip.strip())
+        return new_clip.strip()
 
     # If no new text was copied (no selection), restore prior clipboard and do NOT read stale data
     if prior_clip and prior_clip != sentinel:

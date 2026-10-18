@@ -86,6 +86,7 @@ class SpeechPlayer:
         chapter_markers: Optional[list[int]] = None,
         chapter_titles: Optional[list[str]] = None,
         stream_complete: bool = True,
+        total_planned_chapters: Optional[int] = None,
         on_start: Optional[Callable[[], None]] = None,
         on_level: Optional[Callable[[float], None]] = None,
         on_finish: Optional[Callable[[], None]] = None
@@ -110,10 +111,16 @@ class SpeechPlayer:
             else:
                 self.chapter_markers = [0]
 
-            if chapter_titles and len(chapter_titles) == len(self.chapter_markers):
+            if chapter_titles:
                 self.chapter_titles = list(chapter_titles)
             else:
                 self.chapter_titles = [f"Chapter {i+1}" for i in range(len(self.chapter_markers))]
+
+            self.total_planned_chapters = max(
+                len(self.chapter_markers),
+                len(self.chapter_titles),
+                total_planned_chapters or 0
+            )
 
         if on_start:
             try:
@@ -178,7 +185,12 @@ class SpeechPlayer:
                 new_marker = len(self.audio_data) + silence_frames
                 self.audio_data = np.concatenate([self.audio_data, silence, pcm_chunk])
                 self.chapter_markers.append(new_marker)
-                self.chapter_titles.append(chapter_title or f"Chapter {len(self.chapter_markers)}")
+                ch_idx = len(self.chapter_markers) - 1
+                if ch_idx < len(self.chapter_titles):
+                    if chapter_title and (not self.chapter_titles[ch_idx] or self.chapter_titles[ch_idx].startswith("Chapter ")):
+                        self.chapter_titles[ch_idx] = chapter_title
+                else:
+                    self.chapter_titles.append(chapter_title or f"Chapter {len(self.chapter_markers)}")
 
     def set_stream_complete(self, complete: bool = True):
         """Signals whether the producer has finished appending chapters to the stream."""
@@ -284,7 +296,8 @@ class SpeechPlayer:
     @property
     def total_chapters(self) -> int:
         """Total number of chapters in the current speech buffer."""
-        return len(self.chapter_markers)
+        with self._lock:
+            return max(len(self.chapter_markers), getattr(self, "total_planned_chapters", 0))
 
     @property
     def current_chapter_title(self) -> str:
@@ -307,15 +320,19 @@ class SpeechPlayer:
             if curr + 1 < len(self.chapter_markers):
                 target_chapter = curr + 1
                 self.current_idx = self.chapter_markers[target_chapter]
+            elif not self._stream_complete:
+                # Streaming chapters are still being appended; advance near end of current chunk buffer
+                # so playback seamlessly flows into the next appended chapter
+                self.current_idx = max(0, len(self.audio_data) - int(0.1 * self.samplerate))
+                target_chapter = curr
             else:
-                if len(self.chapter_markers) <= 1:
-                    delta_samples = int(10.0 * self.samplerate)
-                    self.current_idx = min(len(self.audio_data) - int(0.5 * self.samplerate), self.current_idx + delta_samples)
-                    self.current_idx = max(0, self.current_idx)
-                    target_chapter = curr
-                else:
-                    self.current_idx = len(self.audio_data)
-                    target_chapter = curr
+                # On final chapter or single-chapter audio:
+                # Advance forward safely by 5s without exceeding buffer, and NEVER kill playback!
+                delta_samples = int(5.0 * self.samplerate)
+                max_pos = max(0, len(self.audio_data) - int(0.2 * self.samplerate))
+                if max_pos > self.current_idx:
+                    self.current_idx = min(max_pos, self.current_idx + delta_samples)
+                target_chapter = curr
 
         if self.on_state_change:
             try:

@@ -130,17 +130,29 @@ def decode_mp3_to_pcm(mp3_data: bytes) -> np.ndarray:
 
 def extract_chapters_from_text(raw_text: str) -> list[tuple[str, str]]:
     """
-    Extracts structured chapters from an assistant response text.
+    Extracts structured chapters from an assistant response text or highlighted text.
     Returns list of (title, chapter_text).
-    Detects markdown headings (## or ###), numbered points (1. ..., 2. ...),
-    or paragraph boundaries for long texts.
+    Detects:
+      1. Markdown headings (## or ### or ####)
+      2. Bold bullet points (* **Topic**: or - **Topic**: or • **Topic**:)
+      3. Numbered points (1. ..., 2. ..., Step 1: ..., Item 1: ...)
+      4. Horizontal rule section dividers (---)
+      5. Distinct paragraph blocks (for multi-paragraph responses)
+      6. Sentence-based chunking for long continuous text (> 50 words)
     If text is short or cannot be segmented, returns [("Overview", raw_text)].
     """
     if not raw_text or not raw_text.strip():
         return [("Overview", "")]
     text = raw_text.strip()
 
-    # 1. Heading-based splitting (## or ###)
+    def _clean_title(raw_t: str) -> str:
+        t = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', raw_t)
+        t = re.sub(r'[*_`#]', '', t)
+        t = re.sub(r'^[*\-\d.\s\U00010000-\U0010ffff\u2600-\u27bf:]+\s*', '', t)
+        t = t.strip().rstrip(':').strip()
+        return t[:40].strip()
+
+    # 1. Heading-based splitting (## or ### or ####)
     header_pattern = r'(?:^|\n)(#{1,4}\s+[^\n]+)'
     parts = re.split(header_pattern, text)
     if len(parts) >= 3:
@@ -150,43 +162,65 @@ def extract_chapters_from_text(raw_text: str) -> list[tuple[str, str]]:
             chapters.append(("Overview", intro))
         for i in range(1, len(parts), 2):
             h_line = parts[i].strip().lstrip('#').strip()
-            h_clean = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', h_line)
-            h_clean = re.sub(r'[*_`]', '', h_clean)
-            h_title = re.sub(r'^[#*\-\d.\s\U00010000-\U0010ffff\u2600-\u27bf]+\s*', '', h_clean)[:45].strip()
+            h_title = _clean_title(h_line)
             body = parts[i+1].strip() if i+1 < len(parts) else ''
             if body:
                 chapters.append((h_title or f"Chapter {len(chapters)+1}", body))
         if len(chapters) > 1:
             return chapters
 
-    # 2. Numbered item splitting (1. ... 2. ...)
-    numbered_pattern = r'(?:^|\n)(?=(?:\d+\.|\bItem\s+\d+:?)\s+)'
+    # 2. Bold / Bullet section splitting (* **Title**: or - **Title**: or • **Title**:)
+    bullet_pattern = r'(?:^|\n)(?=\s*[-*•]\s+\*\*[^*]+\*\*[:\s-]*)'
+    b_parts = [p.strip() for p in re.split(bullet_pattern, text) if p.strip()]
+    if len(b_parts) >= 2:
+        chapters = []
+        for i, p in enumerate(b_parts):
+            m_bold = re.search(r'\*\*([^*]+)\*\*', p)
+            raw_title = m_bold.group(1).strip() if m_bold else p.split('\n')[0].strip()
+            title = _clean_title(raw_title)
+            chapters.append((title or f"Point {i+1}", p))
+        if len(chapters) > 1:
+            return chapters
+
+    # 3. Numbered item splitting (1. ... 2. ... or Item 1: ... Step 1: ...)
+    numbered_pattern = r'(?:^|\n)(?=(?:\d+[\.)]|\b(?:Item|Step|Section|Part|Phase)\s+\d+[:\.]?)\s+)'
     num_parts = [p.strip() for p in re.split(numbered_pattern, text) if p.strip()]
     if len(num_parts) >= 2:
         chapters = []
         for i, p in enumerate(num_parts):
             first_line = p.split('\n')[0].strip()
-            t_clean = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', first_line)
-            t_clean = re.sub(r'[*_`]', '', t_clean)
-            title = re.sub(r'^[#*\-\d.\s\U00010000-\U0010ffff\u2600-\u27bf]+\s*', '', t_clean)[:40].strip()
+            m_bold = re.search(r'\*\*([^*]+)\*\*', first_line)
+            raw_title = m_bold.group(1).strip() if m_bold else first_line
+            title = _clean_title(raw_title)
             chapters.append((title or f"Point {i+1}", p))
         if len(chapters) > 1:
             return chapters
 
-    # 3. Paragraph-based splitting (\n\n+)
+    # 4. Horizontal rule section splitting (--- or ***)
+    hr_pattern = r'(?:^|\n)\s*[-*_]{3,}\s*(?:\n|$)'
+    hr_parts = [p.strip() for p in re.split(hr_pattern, text) if p.strip()]
+    if len(hr_parts) >= 2:
+        chapters = []
+        for i, p in enumerate(hr_parts):
+            first_line = p.split('\n')[0].strip()
+            title = _clean_title(first_line)
+            chapters.append((title or f"Section {i+1}", p))
+        if len(chapters) > 1:
+            return chapters
+
+    # 5. Paragraph-based splitting (\n\n+)
     paragraphs = [p.strip() for p in re.split(r'\n{2,}', text) if p.strip()]
-    if len(paragraphs) >= 2:
+    words = text.split()
+    if len(paragraphs) >= 2 and len(words) >= 25:
         chapters = []
         buf = []
         buf_words = 0
         for p in paragraphs:
             p_words = len(p.split())
-            if buf_words > 0 and (buf_words + p_words) > 40:
+            if buf_words > 0 and (buf_words + p_words) > 25:
                 c_text = '\n\n'.join(buf)
                 first_line = buf[0].split('\n')[0].strip()
-                t_clean = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', first_line)
-                t_clean = re.sub(r'[*_`]', '', t_clean)
-                title = re.sub(r'^[#*\-\d.\s\U00010000-\U0010ffff\u2600-\u27bf]+\s*', '', t_clean)[:40].strip()
+                title = _clean_title(first_line)
                 chapters.append((title or f"Section {len(chapters)+1}", c_text))
                 buf = [p]
                 buf_words = p_words
@@ -196,16 +230,13 @@ def extract_chapters_from_text(raw_text: str) -> list[tuple[str, str]]:
         if buf:
             c_text = '\n\n'.join(buf)
             first_line = buf[0].split('\n')[0].strip()
-            t_clean = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', first_line)
-            t_clean = re.sub(r'[*_`]', '', t_clean)
-            title = re.sub(r'^[#*\-\d.\s\U00010000-\U0010ffff\u2600-\u27bf]+\s*', '', t_clean)[:40].strip()
+            title = _clean_title(first_line)
             chapters.append((title or f"Section {len(chapters)+1}", c_text))
         if len(chapters) > 1:
             return chapters
 
-    # 4. Long continuous text fallback: chunk by sentences (~50-80 words each)
-    words = text.split()
-    if len(words) > 75:
+    # 6. Long continuous text fallback: chunk by sentences (~45-75 words each)
+    if len(words) > 50:
         sentences = re.split(r'(?<=[.!?])\s+', text)
         if len(sentences) >= 2:
             chapters = []
@@ -213,12 +244,10 @@ def extract_chapters_from_text(raw_text: str) -> list[tuple[str, str]]:
             buf_w = 0
             for s in sentences:
                 s_w = len(s.split())
-                if buf_w > 0 and (buf_w + s_w) >= 60:
+                if buf_w > 0 and (buf_w + s_w) >= 45:
                     c_text = ' '.join(buf)
                     first_words = ' '.join(buf[0].split()[:6])
-                    t_clean = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', first_words)
-                    t_clean = re.sub(r'[*_`]', '', t_clean)
-                    title = re.sub(r'^[#*\-\d.\s\U00010000-\U0010ffff\u2600-\u27bf]+\s*', '', t_clean)[:40].strip()
+                    title = _clean_title(first_words)
                     chapters.append((title or f"Part {len(chapters)+1}", c_text))
                     buf = [s]
                     buf_w = s_w
@@ -228,9 +257,7 @@ def extract_chapters_from_text(raw_text: str) -> list[tuple[str, str]]:
             if buf:
                 c_text = ' '.join(buf)
                 first_words = ' '.join(buf[0].split()[:6])
-                t_clean = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', first_words)
-                t_clean = re.sub(r'[*_`]', '', t_clean)
-                title = re.sub(r'^[#*\-\d.\s\U00010000-\U0010ffff\u2600-\u27bf]+\s*', '', t_clean)[:40].strip()
+                title = _clean_title(first_words)
                 chapters.append((title or f"Part {len(chapters)+1}", c_text))
             if len(chapters) > 1:
                 return chapters
@@ -455,10 +482,12 @@ async def speak_async(
                 norm_c1 = normalize_phonetics(chapters[0][1])
                 c1_pcm = synth_kokoro_pcm(norm_c1, voice=voice, speed=effective_speed)
                 if len(c1_pcm) > 0:
+                    planned_titles = [c[0] for c in chapters]
                     global_player.play_pcm(
                         c1_pcm,
                         chapter_markers=[0],
-                        chapter_titles=[chapters[0][0]],
+                        chapter_titles=planned_titles,
+                        total_planned_chapters=len(chapters),
                         stream_complete=False,
                         on_start=on_start,
                         on_level=on_level,
@@ -611,10 +640,12 @@ async def speak_async(
     if len(chapters) > 1:
         c1_pcm = synth_sapi_pcm(chapters[0][1])
         if len(c1_pcm) > 0:
+            planned_titles = [c[0] for c in chapters]
             global_player.play_pcm(
                 c1_pcm,
                 chapter_markers=[0],
-                chapter_titles=[chapters[0][0]],
+                chapter_titles=planned_titles,
+                total_planned_chapters=len(chapters),
                 stream_complete=False,
                 on_start=on_start,
                 on_level=on_level,

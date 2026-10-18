@@ -811,6 +811,7 @@ class AntiTrayApp:
         self.hud.on_collapse = self.collapse_hud_to_tray
         self.hud_collapsed = False
         self._last_read_app = ""
+        self.is_reading_highlight = False
         self.hud.start()
 
         # Security & STT
@@ -1254,14 +1255,22 @@ class AntiTrayApp:
         if not is_speech_active():
             return
 
-        cur_ch, tot_ch, _ = get_chapter_info()
+        cur_ch, tot_ch, title = get_chapter_info()
         q_count = len(self.speech_queue)
 
-        # If on final chapter (or single-chapter) and more outputs are waiting, skip to next queued output
-        if cur_ch >= tot_ch and q_count > 0:
-            print("[⏭️ SKIP NEXT]: At final chapter with queued items -> advancing to next output")
-            self.skip_current_output()
-            return
+        # If on final chapter (or single-chapter):
+        if cur_ch >= tot_ch:
+            if q_count > 0:
+                print(f"[⏭️ SKIP NEXT]: At final chapter ({cur_ch}/{tot_ch}) with {q_count} queued outputs -> advancing to next output")
+                self.skip_current_output()
+                return
+            else:
+                label = "Final Chapter" if tot_ch > 1 else "Single Chapter"
+                print(f"[⏭️ SKIP NEXT]: Already at {label} ({cur_ch}/{tot_ch}). Continuing playback.")
+                if self.hud_enabled and not getattr(self, "hud_collapsed", False):
+                    if hasattr(self.hud, "flash_action"):
+                        self.hud.flash_action(f"ℹ️  {label} ({cur_ch}/{tot_ch})", duration_sec=1.4)
+                return
 
         new_ch = skip_to_next_chapter()
         cur_ch, tot_ch, title = get_chapter_info()
@@ -1272,9 +1281,11 @@ class AntiTrayApp:
         except Exception:
             pass
 
-        chat_tag = f"[{self.current_speech_item.chat_tag}] " if (self.current_speech_item and self.current_speech_item.chat_tag) else ""
+        chat_tag = f"[{self.current_speech_item.chat_tag}] " if (self.current_speech_item and self.current_speech_item.chat_tag) else (f"[{self._last_read_app}] " if getattr(self, "_last_read_app", None) else "")
         q_str = f" • Q:{q_count}" if q_count > 0 else ""
-        if self.hud_enabled:
+        if self.hud_enabled and not getattr(self, "hud_collapsed", False):
+            if hasattr(self.hud, "flash_action"):
+                self.hud.flash_action(f"⏭  Ch {cur_ch}/{tot_ch}: {title[:18]}", duration_sec=1.4)
             self.hud.set_status(f"{chat_tag}Ch {cur_ch}/{tot_ch}: {title[:16]}{q_str}", state="speaking")
         print(f"[*] Skipped to Next Chapter -> Chapter {cur_ch}/{tot_ch} ({title})")
 
@@ -1282,6 +1293,7 @@ class AntiTrayApp:
         """Immediately skip the current playing response and jump to the next queued response."""
         print("[⏭️ SKIP OUTPUT]: Skipping current response...")
         self._skip_current_flag = True
+        self.is_reading_highlight = False
         stop_speech()
         play_chime(rising=False)
 
@@ -1358,9 +1370,13 @@ class AntiTrayApp:
 
             new_ch = repeat_last_chapter()
             cur_ch, tot_ch, title = get_chapter_info()
-            chat_tag = f"[{self.current_speech_item.chat_tag}]" if (self.current_speech_item and self.current_speech_item.chat_tag) else ""
-            if self.hud_enabled:
-                self.hud.set_status(chat_tag or "Speaking", state="speaking" if is_speaking() else "paused")
+            chat_tag = f"[{self.current_speech_item.chat_tag}] " if (self.current_speech_item and self.current_speech_item.chat_tag) else (f"[{self._last_read_app}] " if getattr(self, "_last_read_app", None) else "")
+            q_count = len(self.speech_queue)
+            q_str = f" • Q:{q_count}" if q_count > 0 else ""
+            if self.hud_enabled and not getattr(self, "hud_collapsed", False):
+                if hasattr(self.hud, "flash_action"):
+                    self.hud.flash_action(f"⏮  Ch {cur_ch}/{tot_ch}: {title[:18]}", duration_sec=1.4)
+                self.hud.set_status(f"{chat_tag}Ch {cur_ch}/{tot_ch}: {title[:16]}{q_str}", state="speaking" if is_speaking() else "paused")
             print(f"[*] Repeated Chapter -> Chapter {cur_ch}/{tot_ch} ({title})")
         elif len(self.output_history) > 0:
             self.go_back_output()
@@ -1368,6 +1384,7 @@ class AntiTrayApp:
             self.replay_last_response()
 
     def interrupt_speech(self, icon=None, item=None):
+        self.is_reading_highlight = False
         with self._speak_lock:
             self.speech_queue.clear()
             self.current_speech_item = None
@@ -1406,13 +1423,21 @@ class AntiTrayApp:
         text = capture_highlighted_text(target_hwnd)
         if text and text.strip():
             print(f"\n[📖 READ HIGHLIGHTED TEXT]: App='{app_name or 'unknown'}' Captured {len(text.split())} words: \"{text[:60]}...\"")
+            stop_speech()
+            self.is_reading_highlight = True
+            highlight_item = SpeechQueueItem(text=text, chat_tag=f"{app_name} Selection" if app_name else "Selection")
+            with self._speak_lock:
+                self.current_speech_item = highlight_item
+
             if self.hud_enabled and not self.hud_collapsed:
                 self.hud.show(state="speaking", status=f"{tag_str}Reading Selection")
             self.set_tray_state("anti_speaking", f"AudioMind: Reading {tag_str}Selection...")
 
             def _on_start():
+                cur_ch, tot_ch, title = get_chapter_info()
+                ch_label = f"Ch {cur_ch}/{tot_ch}: {title[:16]}" if tot_ch > 1 else "Reading Selection"
                 if self.hud_enabled and not self.hud_collapsed:
-                    self.hud.show(state="speaking", status=f"{tag_str}Reading Selection")
+                    self.hud.show(state="speaking", status=f"{tag_str}{ch_label}")
                 self.set_tray_state("anti_speaking", f"AudioMind: Reading {tag_str}Selection...")
 
             def _on_lvl(lvl: float):
@@ -1425,13 +1450,19 @@ class AntiTrayApp:
                 except Exception as e:
                     print(f"[!] Read highlighted text error: {e}")
                 finally:
+                    self.is_reading_highlight = False
+                    with self._speak_lock:
+                        if self.current_speech_item == highlight_item:
+                            self.current_speech_item = None
+                    self._speech_worker_event.set()
+
                     if is_speaking():
                         pass
                     elif is_paused():
                         if self.hud_enabled and not self.hud_collapsed:
                             self.hud.set_status(f"{tag_str}Paused", state="paused")
                         self.set_tray_state("paused", f"AudioMind: Speech Paused ({app_name or 'Selection'})")
-                    else:
+                    elif len(self.speech_queue) == 0:
                         if self.hud_enabled:
                             self.hud.hide()
                         if not self.muted:
@@ -1554,7 +1585,17 @@ class AntiTrayApp:
 
         print(f"[📥 SPEECH QUEUED]: Chat='{queue_item.chat_tag or 'general'}' ({q_len} in queue)")
 
-        # ISSUE 1 RESOLUTION:
+        # If highlighted text is currently being read, keep new responses in queue without interrupting!
+        if getattr(self, "is_reading_highlight", False) and is_speech_active():
+            print(f"[📥 SPEECH QUEUED BEHIND HIGHLIGHT]: Preserving active highlighted text reading ({q_len} in queue).")
+            if self.hud_enabled and not self.hud_collapsed:
+                app_tag = f"[{self._last_read_app}] " if getattr(self, "_last_read_app", None) else ""
+                cur_ch, tot_ch, title = get_chapter_info()
+                ch_label = f"Ch {cur_ch}/{tot_ch}: {title[:16]}" if tot_ch > 1 else "Reading Selection"
+                st = "paused" if is_paused() else "speaking"
+                self.hud.set_status(f"{app_tag}{ch_label} • Q:{q_len}", state=st)
+            return
+
         # If speech is currently PAUSED, the user paused/stopped listening to the previous output.
         # Immediately stop paused speech so the new response begins playing automatically!
         if is_paused():
@@ -1569,6 +1610,10 @@ class AntiTrayApp:
     def _speech_queue_worker(self):
         """Continuous background worker that plays queued assistant speech responses sequentially."""
         while self.running:
+            # Respect active highlighted text reading; do NOT preempt or interrupt it!
+            while self.running and getattr(self, "is_reading_highlight", False) and is_speech_active():
+                time.sleep(0.15)
+
             item: Optional[SpeechQueueItem] = None
             with self._speak_lock:
                 if self.speech_queue:
