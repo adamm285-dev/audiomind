@@ -723,6 +723,13 @@ def skip_to_next_chapter() -> Optional[int]:
     except Exception:
         return None
 
+def repeat_current_chapter() -> Optional[int]:
+    """Restarts the current chapter from its beginning. Returns target chapter index."""
+    try:
+        return global_player.repeat_current_chapter()
+    except Exception:
+        return None
+
 def repeat_last_chapter() -> Optional[int]:
     """Repeats the current chapter or jumps to the previous chapter. Returns target chapter index."""
     try:

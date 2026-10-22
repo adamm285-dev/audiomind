@@ -341,6 +341,28 @@ class SpeechPlayer:
                 pass
         return target_chapter
 
+    def repeat_current_chapter(self) -> Optional[int]:
+        """
+        Unconditionally restarts the current chapter from its beginning (0:00).
+        Unlike repeat_last_chapter(), does not jump to the previous chapter regardless
+        of elapsed playback time.
+        Returns the current 0-based chapter index, or None if not playing.
+        """
+        with self._lock:
+            if not self._is_playing or self.audio_data is None:
+                return None
+            curr = self.current_chapter_index
+            curr_marker = self.chapter_markers[curr]
+            self.current_idx = curr_marker
+            target_chapter = curr
+
+        if self.on_state_change:
+            try:
+                self.on_state_change("chapter_repeated")
+            except Exception:
+                pass
+        return target_chapter
+
     def repeat_last_chapter(self) -> Optional[int]:
         """
         If playback has progressed more than 2 seconds into the current chapter,

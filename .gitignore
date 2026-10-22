@@ -72,6 +72,16 @@ desktop/resources/models/voices*
 Thumbs.db
 desktop.ini
 
-# SDCS Sessions & Flight Recorder Logs
+# SDCS Scaffolding, Sessions & Cognitive Pillars
+.sdcs/
 sessions/
+spine.md
+wiring.yaml
+roadmap.md
+state.md
+app_map.md
+decisions.md
+evals.md
+MOCKS.md
+AGENTS.md
 

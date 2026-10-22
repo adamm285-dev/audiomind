@@ -821,7 +821,9 @@ def test_tray_menu_settings_submenu(monkeypatch):
         def rewind_speech_5(self, icon=None, item=None): pass
         def skip_next_chapter(self, icon=None, item=None): pass
         def skip_current_output(self, icon=None, item=None): pass
+        def repeat_curr_chapter(self, icon=None, item=None): pass
         def repeat_chapter(self, icon=None, item=None): pass
+        def repeat_current_output(self, icon=None, item=None): pass
         def go_back_output(self, icon=None, item=None): pass
         def interrupt_speech(self, icon=None, item=None): pass
         def replay_last_response(self, icon=None, item=None): pass
@@ -876,27 +878,59 @@ def test_match_playback_intent_previous_output():
 
     prev_phrases = [
         "previous output",
-        "last output",
         "go back output",
         "go back an output",
         "go back one output",
         "go back 1 output",
         "previous response",
-        "last response",
         "go back a response",
         "go back one response",
         "read previous output",
-        "re-read last output",
         "replay previous output",
-        "replay last output",
-        "read last output",
-        "re-read last response",
         "read previous response",
     ]
 
     for p in prev_phrases:
         assert match_playback_intent(p, speech_active=True) == "PREVIOUS_OUTPUT", f"Phrase '{p}' did not match PREVIOUS_OUTPUT while active"
         assert match_playback_intent(p, speech_active=False) is None, f"Phrase '{p}' should not match when inactive"
+
+
+def test_match_playback_intent_repeat_output_and_current_chapter():
+    """Verify voice intent matcher recognizes REPEAT_OUTPUT and REPEAT_CURRENT_CHAPTER phrases."""
+    from desktop.app import match_playback_intent
+
+    repeat_output_phrases = [
+        "repeat output",
+        "repeat current output",
+        "repeat last output",
+        "replay output",
+        "replay current output",
+        "replay last output",
+        "re-read output",
+        "re-read current output",
+        "re-read last output",
+        "read output again",
+        "read last output again",
+        "repeat response",
+        "repeat current response",
+        "repeat last response",
+        "play last output again",
+    ]
+    for p in repeat_output_phrases:
+        assert match_playback_intent(p, speech_active=True) == "REPEAT_OUTPUT", f"Phrase '{p}' did not match REPEAT_OUTPUT"
+        assert match_playback_intent(p, speech_active=False) is None
+
+    repeat_ch_phrases = [
+        "repeat current chapter",
+        "replay current chapter",
+        "restart current chapter",
+        "repeat this chapter",
+        "replay this chapter",
+        "restart this chapter",
+    ]
+    for p in repeat_ch_phrases:
+        assert match_playback_intent(p, speech_active=True) == "REPEAT_CURRENT_CHAPTER", f"Phrase '{p}' did not match REPEAT_CURRENT_CHAPTER while active"
+        assert match_playback_intent(p, speech_active=False) is None
 
 
 def test_paused_speech_auto_advances_on_new_response(monkeypatch):

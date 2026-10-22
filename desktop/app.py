@@ -152,7 +152,7 @@ try:
     from desktop.audio.tts import (
         speak, stop_speech, pause_speech, resume_speech, 
         toggle_pause, rewind_speech, fast_forward_speech,
-        skip_to_next_chapter, repeat_last_chapter, get_chapter_info,
+        skip_to_next_chapter, repeat_current_chapter, repeat_last_chapter, get_chapter_info,
         is_speaking, is_paused, is_speech_active, get_speech_player,
         set_speech_speed, get_speech_speed, set_default_voice, get_default_voice
     )
@@ -164,7 +164,7 @@ except ImportError:
         from audio.tts import (
             speak, stop_speech, pause_speech, resume_speech, 
             toggle_pause, rewind_speech, fast_forward_speech,
-            skip_to_next_chapter, repeat_last_chapter, get_chapter_info,
+            skip_to_next_chapter, repeat_current_chapter, repeat_last_chapter, get_chapter_info,
             is_speaking, is_paused, is_speech_active, get_speech_player,
             set_speech_speed, get_speech_speed, set_default_voice, get_default_voice
         )
@@ -182,6 +182,7 @@ except ImportError:
         rewind_speech = None
         fast_forward_speech = None
         skip_to_next_chapter = None
+        repeat_current_chapter = None
         repeat_last_chapter = None
         get_chapter_info = lambda: (1, 1, "Overview")
         is_speaking = None
@@ -475,7 +476,7 @@ def is_foreground_window(hwnd) -> bool:
 def match_playback_intent(text: str, speech_active: bool) -> Optional[str]:
     """
     Pure matcher for speech playback voice intents.
-    Returns the intent name ('PAUSE', 'RESUME', 'REWIND_5', 'NEXT_CHAPTER', 'REPEAT_CHAPTER', 'STOP')
+    Returns the intent name ('PAUSE', 'RESUME', 'REWIND_5', 'NEXT_CHAPTER', 'REPEAT_CURRENT_CHAPTER', 'REPEAT_CHAPTER', 'REPEAT_OUTPUT', 'STOP')
     or None if no match or speech is not active.
     Note: 'forward' is strictly a tray button/action and excluded from voice commands.
     """
@@ -499,9 +500,23 @@ def match_playback_intent(text: str, speech_active: bool) -> Optional[str]:
     NEXT_CH_COMMANDS = {
         "next chapter", "skip chapter", "skip to next chapter", "next section", "skip section"
     }
+    REPEAT_CURRENT_CH_COMMANDS = {
+        "repeat current chapter", "replay current chapter", "restart current chapter",
+        "repeat this chapter", "replay this chapter", "restart this chapter"
+    }
     REPEAT_CH_COMMANDS = {
         "repeat chapter", "replay chapter", "previous chapter", "last chapter",
         "repeat last chapter", "restart chapter", "previous section"
+    }
+    REPEAT_CURRENT_OUTPUT_COMMANDS = {
+        "repeat output", "repeat current output", "repeat last output",
+        "replay output", "replay current output", "replay last output",
+        "re-read output", "re-read current output", "re-read last output",
+        "read output again", "read last output again", "repeat response",
+        "repeat current response", "repeat last response", "replay response",
+        "replay current response", "replay last response", "re-read response",
+        "re-read current response", "re-read last response", "read response again",
+        "read last response again", "play last output again", "play current output again"
     }
     STOP_COMMANDS = {
         "stop", "cancel", "stop talking", "shut up", "be quiet", "stop speech", "cancel reading"
@@ -511,11 +526,10 @@ def match_playback_intent(text: str, speech_active: bool) -> Optional[str]:
         "skip to next output", "skip to next response"
     }
     PREVIOUS_OUTPUT_COMMANDS = {
-        "previous output", "last output", "go back output", "go back an output",
-        "go back one output", "go back 1 output", "previous response", "last response",
+        "previous output", "go back output", "go back an output",
+        "go back one output", "go back 1 output", "previous response",
         "go back a response", "go back one response", "read previous output",
-        "re-read last output", "replay previous output", "replay last output",
-        "read last output", "re-read last response", "read previous response"
+        "replay previous output", "read previous response"
     }
 
     if clean in PAUSE_COMMANDS:
@@ -526,8 +540,12 @@ def match_playback_intent(text: str, speech_active: bool) -> Optional[str]:
         return "REWIND_5"
     if clean in NEXT_CH_COMMANDS:
         return "NEXT_CHAPTER"
+    if clean in REPEAT_CURRENT_CH_COMMANDS:
+        return "REPEAT_CURRENT_CHAPTER"
     if clean in REPEAT_CH_COMMANDS:
         return "REPEAT_CHAPTER"
+    if clean in REPEAT_CURRENT_OUTPUT_COMMANDS:
+        return "REPEAT_OUTPUT"
     if clean in STOP_COMMANDS:
         return "STOP"
     if clean in SKIP_OUTPUT_COMMANDS:
@@ -976,8 +994,10 @@ class AntiTrayApp:
             item("⏪  Rewind 5 Seconds", self.rewind_speech_5, enabled=lambda it: is_speech_active()),
             item("⏭️  Skip to Next Chapter", self.skip_next_chapter, enabled=lambda it: is_speech_active()),
             item(lambda it: f"⏭️  Skip to Next Output ({len(self.speech_queue)} queued)" if len(self.speech_queue) > 0 else "⏭️  Skip to Next Output  (Ctrl+Alt+N)", self.skip_current_output, enabled=lambda it: is_speech_active() or len(self.speech_queue) > 0),
-            item("⏮️  Repeat Last Chapter", self.repeat_chapter, enabled=lambda it: is_speech_active() or bool(self.last_spoken_summary) or len(self.output_history) > 0),
-            item(lambda it: f"⏮️  Previous Output (Go Back)" if len(self.output_history) > 1 else "⏮️  Replay Last Output  (Ctrl+Alt+P)", self.go_back_output, enabled=lambda it: len(self.output_history) > 0 or bool(self.last_spoken_summary)),
+            item("⏮️  Repeat Current Chapter", self.repeat_curr_chapter, enabled=lambda it: is_speech_active()),
+            item("⏮️  Repeat Last Chapter / Prev", self.repeat_chapter, enabled=lambda it: is_speech_active() or bool(self.last_spoken_summary) or len(self.output_history) > 0),
+            item("🔁  Repeat Current Output", self.repeat_current_output, enabled=lambda it: len(self.output_history) > 0 or bool(self.last_spoken_summary)),
+            item("⏮️  Previous Output (Go Back)  (Ctrl+Alt+P)", self.go_back_output, enabled=lambda it: len(self.output_history) > 0 or bool(self.last_spoken_summary)),
             item("⏹️  Stop Speaking / Interrupt", self.interrupt_speech, enabled=lambda it: is_speech_active() or len(self.speech_queue) > 0),
             item("📖  Read Highlighted Text  (Ctrl+Alt+R)", self.read_highlighted_text),
             item(lambda it: "🔼  Show Cockpit HUD" if getattr(self, "hud_collapsed", False) or not getattr(getattr(self, "hud", None), "visible", True) else "🔽  Collapse HUD to Tray", getattr(self, "toggle_hud_collapse", lambda: None), enabled=lambda it: getattr(self, "hud_enabled", True)),
@@ -1351,6 +1371,57 @@ class AntiTrayApp:
                 self.hud.show(state="speaking", status=chat_prefix)
 
             self._speech_worker_event.set()
+
+    def repeat_current_output(self, icon=None, item=None):
+        """
+        Replays the current (or most recent) assistant output from the beginning.
+        Does not step backward in history cursor.
+        """
+        print("[🔁 REPEAT CURRENT OUTPUT]: Replaying current/latest output...")
+        with self._speak_lock:
+            if not self.output_history:
+                if self.last_spoken_summary:
+                    self.replay_last_response()
+                    return
+                print("[!] No output available in history to repeat.")
+                if self.hud_enabled:
+                    self.hud.set_status("No Output to Repeat", state="idle")
+                return
+
+            if self.history_cursor < 0 or self.history_cursor >= len(self.output_history):
+                self.history_cursor = len(self.output_history) - 1
+
+            target_item = self.output_history[self.history_cursor]
+            print(f"[🔁 REPEAT CURRENT OUTPUT]: Replaying output {self.history_cursor + 1}/{len(self.output_history)} (Chat: '{target_item.chat_tag}')")
+
+            stop_speech()
+            play_chime(rising=False)
+
+            self.speech_queue.appendleft(target_item)
+
+            if self.hud_enabled:
+                chat_prefix = f"[{target_item.chat_tag}]" if target_item.chat_tag else "AudioMind"
+                self.hud.show(state="speaking", status=chat_prefix)
+
+            self._speech_worker_event.set()
+
+    def repeat_curr_chapter(self, icon=None, item=None):
+        """
+        Unconditionally restarts the current chapter from its beginning (0:00).
+        """
+        if is_speech_active():
+            new_ch = repeat_current_chapter()
+            cur_ch, tot_ch, title = get_chapter_info()
+            chat_tag = f"[{self.current_speech_item.chat_tag}] " if (self.current_speech_item and self.current_speech_item.chat_tag) else (f"[{self._last_read_app}] " if getattr(self, "_last_read_app", None) else "")
+            q_count = len(self.speech_queue)
+            q_str = f" • Q:{q_count}" if q_count > 0 else ""
+            if self.hud_enabled and not getattr(self, "hud_collapsed", False):
+                if hasattr(self.hud, "flash_action"):
+                    self.hud.flash_action(f"⏮  Ch {cur_ch}/{tot_ch}: {title[:18]}", duration_sec=1.4)
+                self.hud.set_status(f"{chat_tag}Ch {cur_ch}/{tot_ch}: {title[:16]}{q_str}", state="speaking" if is_speaking() else "paused")
+            print(f"[*] Repeated Current Chapter -> Chapter {cur_ch}/{tot_ch} ({title})")
+        else:
+            self.repeat_current_output()
 
     def repeat_chapter(self, icon=None, item=None):
         if is_speech_active():
@@ -2202,6 +2273,13 @@ class AntiTrayApp:
                                 wake_cooldown_until = time.time() + 0.5
                                 continue
 
+                            elif intent == "REPEAT_OUTPUT":
+                                self.repeat_current_output()
+                                aec_stream.drain()
+                                self.model.reset()
+                                wake_cooldown_until = time.time() + 0.5
+                                continue
+
                             elif intent == "PREVIOUS_OUTPUT":
                                 self.go_back_output()
                                 aec_stream.drain()
@@ -2218,6 +2296,13 @@ class AntiTrayApp:
                                 if self.hud_enabled and not self.hud_collapsed:
                                     self.hud.set_status(self._format_status_with_chat(f"Ch {cur_ch}/{tot_ch}: {title[:16]}"), state="speaking")
                                 print(f"[⏭️ VOICE COMMAND]: Skipped to Chapter {cur_ch}/{tot_ch} ({title}).")
+                                aec_stream.drain()
+                                self.model.reset()
+                                wake_cooldown_until = time.time() + 0.5
+                                continue
+
+                            elif intent == "REPEAT_CURRENT_CHAPTER":
+                                self.repeat_curr_chapter()
                                 aec_stream.drain()
                                 self.model.reset()
                                 wake_cooldown_until = time.time() + 0.5
