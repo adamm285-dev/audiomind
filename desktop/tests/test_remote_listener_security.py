@@ -313,3 +313,105 @@ def test_real_elevation_helpers():
     assert reason_self is None
     assert isinstance(app_module.is_current_process_elevated(), (bool, type(None)))
 
+
+def test_focus_antigravity_discovers_standalone_app_and_preserves_window_state(monkeypatch):
+    """
+    Verify _focus_antigravity discovers standalone Antigravity.exe when Antigravity IDE.exe
+    is not running, prefers last_app_hwnd, and only calls ShowWindow(SW_RESTORE) if minimized.
+    """
+    monkeypatch.delenv("ANTIGRAVITY_TARGET_APP", raising=False)
+    monkeypatch.setattr(app_module, "attach_to_default_desktop", lambda: None)
+    monkeypatch.setattr(app_module, "is_foreground_window", lambda hwnd: False)
+
+    show_window_calls = []
+    set_fg_calls = []
+
+    class FakeFocusUser32:
+        def IsWindowVisible(self, hwnd):
+            return True
+        def IsIconic(self, hwnd):
+            return hwnd == 2002  # 2002 is minimized, 1001 is visible/snapped
+        def GetWindowThreadProcessId(self, hwnd, pid_ptr):
+            if pid_ptr is not None:
+                pid_ptr._obj.value = 48220
+            return 777
+        def GetWindowRect(self, hwnd, rect_ptr):
+            r = rect_ptr._obj
+            r.left, r.top, r.right, r.bottom = 0, 0, 1920, 2070
+            return 1
+        def GetWindowTextW(self, hwnd, buf, sz):
+            buf.value = "Voice Command Wake-Up Issue"
+            return len(buf.value)
+        def GetClassNameW(self, hwnd, buf, sz):
+            buf.value = "Chrome_WidgetWin_1"
+            return len(buf.value)
+        def OpenDesktopW(self, *args):
+            return 0
+        def EnumWindows(self, cb, lparam):
+            cb(1001, 0)
+            cb(2002, 0)
+            return 1
+        def keybd_event(self, *args):
+            pass
+        def GetForegroundWindow(self):
+            return 9999
+        def AttachThreadInput(self, *args):
+            return 1
+        def ShowWindow(self, hwnd, cmd):
+            show_window_calls.append((hwnd, cmd))
+            return 1
+        def SetForegroundWindow(self, hwnd):
+            set_fg_calls.append(hwnd)
+            return 1
+        def BringWindowToTop(self, hwnd):
+            return 1
+
+    class FakeFocusKernel32:
+        def OpenProcess(self, access, inherit, pid):
+            return 555
+        def QueryFullProcessImageNameW(self, hproc, flags, buf, sz_ptr):
+            buf.value = r"C:\Users\dev\AppData\Local\Programs\antigravity\Antigravity.exe"
+            return 1
+        def CloseHandle(self, h):
+            return 1
+        def GetCurrentThreadId(self):
+            return 111
+
+    fake_ctypes = SimpleNamespace(
+        windll=SimpleNamespace(user32=FakeFocusUser32(), kernel32=FakeFocusKernel32()),
+        WINFUNCTYPE=lambda *args: (lambda fn: fn),
+        create_unicode_buffer=_real_ctypes.create_unicode_buffer,
+        byref=_real_ctypes.byref,
+        c_bool=_real_ctypes.c_bool,
+    )
+    monkeypatch.setattr(app_module, "ctypes", fake_ctypes)
+
+    # 1. Non-minimized window (1001) selected via last_app_hwnd -> must NOT call ShowWindow(SW_RESTORE)
+    dummy = SimpleNamespace(last_app_hwnd=1001)
+    hwnd, rect = AntiTrayApp._focus_antigravity(dummy)
+    assert hwnd == 1001
+    assert dummy._focused_is_ide is False
+    assert dummy._focused_pid == 48220
+    assert set_fg_calls == [1001]
+    assert show_window_calls == []
+
+    # 2. Minimized window (2002) selected via last_app_hwnd -> MUST call ShowWindow(2002, 9)
+    dummy2 = SimpleNamespace(last_app_hwnd=2002)
+    hwnd2, _ = AntiTrayApp._focus_antigravity(dummy2)
+    assert hwnd2 == 2002
+    assert show_window_calls == [(2002, 9)]
+
+def test_standalone_app_click_scales_with_high_dpi(monkeypatch):
+    """Verify standalone Antigravity chat input click scales vertical offset by window DPI."""
+    app, user32 = _patch_win32(monkeypatch, (3473746, app_module.wintypes.RECT(0, 0, 1920, 2070)), [True, True])
+    app._focused_is_ide = False
+
+    cursor_positions = []
+    user32.SetCursorPos = lambda x, y: cursor_positions.append((x, y))
+    user32.GetDpiForWindow = lambda hwnd: 216  # 225% scaling (2.25x)
+
+    assert AntiTrayApp.submit_to_antigravity_chat(app, "Anti, test high dpi", press_enter=False) is True
+    assert len(cursor_positions) == 2  # first click target, second restore original cursor
+    click_x, click_y = cursor_positions[0]
+    assert click_x == int(1920 * 0.28)
+    assert click_y == 2070 - int(82 * 2.25)

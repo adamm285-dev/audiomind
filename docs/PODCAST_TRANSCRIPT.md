@@ -9,7 +9,7 @@ Listen to the full audio episode here: [**`docs/media/audiomind_deep_dive_podcas
 ## 📌 Episode Highlights & Chapters
 
 - **`00:00 - 01:28`**: **The Dreaded "Idle Tax"**: Why developers sit for 15 minutes waiting for an AI agent that finished 14 minutes ago.
-- **`01:29 - 02:30`**: **The Origin Hack**: Manually highlighting and copy-pasting code outputs into Windows system sound — *"like having a supercomputer communicate through a 1998 microwave DMV menu"*.
+- **`01:29 - 02:30`**: **The Origin Hack**: Manually highlighting and copy-pasting code outputs into Windows system sound: *"like having a supercomputer communicate through a 1998 microwave DMV menu"*.
 - **`02:31 - 03:06`**: **Zero-Latency Auto-Play**: Immediate audio streaming with neural voices the exact millisecond the agent completes.
 - **`03:07 - 04:20`**: **A CD Player for Code?!**: Floating translucent HUD with tactile transport controls (`[⏮]`, `[⏪ 5s]`, `[⏭]`) and a 10-band Hi-Fi spectrum analyzer visualizer.
 - **`04:21 - 05:19`**: **Hardware Echo Cancellation**: Windows WASAPI loopback AEC that subtracts the computer's own voice so you can talk over desktop speakers without headphones.
@@ -92,7 +92,7 @@ Listen to the full audio episode here: [**`docs/media/audiomind_deep_dive_podcas
 
 `[02:46]` **Host 2**: And it uses these really warm, studio-grade neural voices.
 
-`[02:50]` **Host 1**: Which completely eliminates the 15-minute stare! You can walk around the room, stretch, grab water, read other docs—the second the agent is done, your computer talks to you. You never miss a beat.
+`[02:50]` **Host 1**: Which completely eliminates the 15-minute stare! You can walk around the room, stretch, grab water, read other docs: the second the agent is done, your computer talks to you. You never miss a beat.
 
 `[03:01]` **Host 2**: It separates the audio from the visual interface, so you don't have to watch a progress spinner.
 

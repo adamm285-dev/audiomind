@@ -24,7 +24,7 @@ When doing heavy daily engineering with Google Antigravity, output from complex 
 
 That friction sparked a builder question: **what if Antigravity had a native ambient voice companion?**
 
-We built a lightweight Windows taskbar harness that sits in the system tray, animates an ambient translucent waveform HUD, watches session transcripts in real-time, and speaks responses aloud with sub-second latency. Soon after, we realized we needed remote control—so when away from the workstation (cooking, driving, or walking around the house), we could say:
+We built a lightweight Windows taskbar harness that sits in the system tray, animates an ambient translucent waveform HUD, watches session transcripts in real-time, and speaks responses aloud with sub-second latency. Soon after, we realized we needed remote control, so when away from the workstation (cooking, driving, or walking around the house), we could say:
 
 > *"Hey Google, tell Antigravity to run the unit test suite and report results."*
 

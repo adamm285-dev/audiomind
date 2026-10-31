@@ -473,7 +473,7 @@ async def speak_async(
     clean_text = clean_markdown_for_speech(text)
     clean_text = normalize_phonetics(clean_text)
 
-    # 1. Tier 1: Kokoro Local Neural TTS (Primary — pristine human voice, offline, 403-immune)
+    # 1. Tier 1: Kokoro Local Neural TTS (Primary: pristine human voice, offline, 403-immune)
     kokoro = get_kokoro()
     if kokoro is not None:
         try:

@@ -1,4 +1,4 @@
-# Antigravity Voice Assistant — Desktop Requirements
+# Antigravity Voice Assistant: Desktop Requirements
 pystray==0.19.5
 Pillow==10.4.0
 numpy==1.26.4

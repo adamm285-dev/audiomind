@@ -67,7 +67,7 @@ Allowing voice to trigger IDE actions is inherently risky. AudioMind implements 
 
 ### Innovation 4: Tiered Offline & Neural Speech Architecture
 AudioMind never locks you into a single cloud API or leaves you stranded without internet:
-- **Tier 1 (Local Neural)**: Kokoro-82M ONNX local neural synthesis — 100% offline, 48kHz stereo, zero cloud latency, warm human-grade voice.
+- **Tier 1 (Local Neural)**: Kokoro-82M ONNX local neural synthesis: 100% offline, 48kHz stereo, zero cloud latency, warm human-grade voice.
 - **Tier 2 (Cloud Neural)**: High-definition Microsoft Edge-TTS neural cloud voices.
 - **Tier 3 (Emergency Fail-Safe)**: Local Windows SAPI 5.0 fallback with instant circuit-breaker failover if network drops.
 

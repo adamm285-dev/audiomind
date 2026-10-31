@@ -185,9 +185,9 @@ except ImportError:
         repeat_current_chapter = None
         repeat_last_chapter = None
         get_chapter_info = lambda: (1, 1, "Overview")
-        is_speaking = None
-        is_paused = None
-        is_speech_active = None
+        is_speaking = lambda: False
+        is_paused = lambda: False
+        is_speech_active = lambda: False
         get_speech_player = None
         set_speech_speed = None
         get_speech_speed = None
@@ -671,6 +671,7 @@ def get_window_app_name(hwnd) -> str:
                             "discord.exe": "Discord",
                             "notepad.exe": "Notepad",
                             "antigravity ide.exe": "Antigravity",
+                            "antigravity.exe": "Antigravity",
                             "firefox.exe": "Firefox",
                             "devenv.exe": "Visual Studio",
                             "windowsterminal.exe": "Terminal",
@@ -1937,7 +1938,7 @@ class AntiTrayApp:
                             cls = ctypes.create_unicode_buffer(260)
                             user32.GetClassNameW(hwnd, cls, 260)
                             # Only target substantive UI windows (skip zero-size, DDE, utility windows)
-                            if w > 300 and h > 300:
+                            if (w > 300 and h > 300) or (user32.IsIconic(hwnd) and title.value.strip()):
                                 candidates.append((hwnd, pid.value, w, h, rect, title.value, exe_name))
                     kernel32.CloseHandle(h_proc)
                 return True
@@ -1953,12 +1954,9 @@ class AntiTrayApp:
                 return None, None
 
             # Target application selection:
-            # Default to Antigravity IDE when installed on the workstation so that closing
-            # the IDE safely fails closed rather than inadvertently typing into the standalone Antigravity app.
-            ide_installed = os.path.exists(
-                os.path.expandvars(r"%LOCALAPPDATA%\Programs\Antigravity IDE\Antigravity IDE.exe")
-            )
-            target_mode = os.getenv("ANTIGRAVITY_TARGET_APP", "ide" if ide_installed else "auto").lower()
+            # Default to "auto" so both Antigravity 2.0 (Antigravity.exe) and Antigravity IDE
+            # (Antigravity IDE.exe) are discovered seamlessly even when both are installed on disk.
+            target_mode = os.getenv("ANTIGRAVITY_TARGET_APP", "auto").lower()
 
             ide_candidates = [c for c in candidates if c[6] == ANTIGRAVITY_IDE_EXE]
             if target_mode == "ide":
@@ -1971,38 +1969,45 @@ class AntiTrayApp:
             if not chosen_candidates:
                 return None, None
 
-            best_hwnd, best_pid, _, _, best_rect, _, best_exe = max(chosen_candidates, key=lambda c: c[2] * c[3])
+            # Prefer the most recently active Antigravity window if tracked, otherwise largest substantive window
+            last_hwnd = getattr(self, "last_app_hwnd", None)
+            recent_matches = [c for c in chosen_candidates if last_hwnd and int(c[0]) == int(last_hwnd)]
+            if recent_matches:
+                best_hwnd, best_pid, _, _, best_rect, _, best_exe = recent_matches[0]
+            else:
+                best_hwnd, best_pid, _, _, best_rect, _, best_exe = max(chosen_candidates, key=lambda c: c[2] * c[3])
             self._focused_is_ide = (best_exe == ANTIGRAVITY_IDE_EXE)
             self._focused_pid = best_pid
 
-            # Windows 10/11 Foreground Lock Bypass:
-            # 1. Simulate an Alt key down/up to grant foreground change permission
-            VK_MENU = 0x12
-            KEYEVENTF_KEYUP = 0x0002
-            user32.keybd_event(VK_MENU, 0, 0, 0)
-            user32.keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)
+            if not is_foreground_window(best_hwnd):
+                # Windows 10/11 Foreground Lock Bypass:
+                # 1. Send an Alt key-up event to satisfy Windows foreground lock without activating the menu bar
+                VK_MENU = 0x12
+                KEYEVENTF_KEYUP = 0x0002
+                user32.keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)
 
-            # 2. Attach thread inputs between current thread, current foreground window, and target window
-            cur_tid = kernel32.GetCurrentThreadId()
-            fg_hwnd = user32.GetForegroundWindow()
-            fg_tid = user32.GetWindowThreadProcessId(fg_hwnd, None)
-            target_tid = user32.GetWindowThreadProcessId(best_hwnd, None)
+                # 2. Attach thread inputs between current thread, current foreground window, and target window
+                cur_tid = kernel32.GetCurrentThreadId()
+                fg_hwnd = user32.GetForegroundWindow()
+                fg_tid = user32.GetWindowThreadProcessId(fg_hwnd, None) if fg_hwnd else 0
+                target_tid = user32.GetWindowThreadProcessId(best_hwnd, None)
 
-            if fg_tid != cur_tid:
-                user32.AttachThreadInput(cur_tid, fg_tid, True)
-            if target_tid != cur_tid:
-                user32.AttachThreadInput(cur_tid, target_tid, True)
+                if fg_tid and fg_tid != cur_tid:
+                    user32.AttachThreadInput(cur_tid, fg_tid, True)
+                if target_tid and target_tid != cur_tid:
+                    user32.AttachThreadInput(cur_tid, target_tid, True)
 
-            # 3. Restore (if minimized), bring to top, and set foreground
-            user32.ShowWindow(best_hwnd, 9)  # SW_RESTORE
-            user32.SetForegroundWindow(best_hwnd)
-            user32.BringWindowToTop(best_hwnd)
+                # 3. Restore only if minimized (avoid un-maximizing or un-snapping active windows), then focus
+                if user32.IsIconic(best_hwnd):
+                    user32.ShowWindow(best_hwnd, 9)  # SW_RESTORE
+                user32.SetForegroundWindow(best_hwnd)
+                user32.BringWindowToTop(best_hwnd)
 
-            # 4. Detach thread inputs
-            if target_tid != cur_tid:
-                user32.AttachThreadInput(cur_tid, target_tid, False)
-            if fg_tid != cur_tid:
-                user32.AttachThreadInput(cur_tid, fg_tid, False)
+                # 4. Detach thread inputs
+                if target_tid and target_tid != cur_tid:
+                    user32.AttachThreadInput(cur_tid, target_tid, False)
+                if fg_tid and fg_tid != cur_tid:
+                    user32.AttachThreadInput(cur_tid, fg_tid, False)
 
             user32.GetWindowRect(best_hwnd, ctypes.byref(best_rect))
             return best_hwnd, best_rect
@@ -2088,9 +2093,18 @@ class AntiTrayApp:
 
                 w = rect.right - rect.left
                 h = rect.bottom - rect.top
-                # Target the chat input textarea (horizontally ~40% across, 48px from the bottom)
-                click_x = rect.left + int(w * 0.40)
-                click_y = rect.bottom - 48
+                dpi_scale = 1.0
+                get_dpi = getattr(user32, "GetDpiForWindow", None)
+                if callable(get_dpi):
+                    try:
+                        dpi = get_dpi(best_hwnd)
+                        if isinstance(dpi, int) and dpi > 0:
+                            dpi_scale = dpi / 96.0
+                    except Exception:
+                        pass
+                # Target the chat input textarea (horizontally ~28% across, DPI-scaled 82 logical px from the bottom)
+                click_x = rect.left + int(w * 0.28)
+                click_y = rect.bottom - int(82 * dpi_scale)
 
                 user32.SetCursorPos(click_x, click_y)
                 time.sleep(0.02)
@@ -2495,7 +2509,7 @@ class AntiTrayApp:
                             # Play submit chime
                             play_submit_chime()
 
-                            # 4. Paste into Antigravity IDE chat — NEVER auto-submit remote input!
+                            # 4. Paste into Antigravity IDE chat: NEVER auto-submit remote input!
                             # The user must physically review and press Enter themselves.
                             if not self.submit_to_antigravity_chat(instruction, press_enter=False):
                                 self.pending_remote_dispatch = None
