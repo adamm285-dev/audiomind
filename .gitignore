@@ -87,3 +87,6 @@ AGENTS.md
 prompts/
 
 
+NOTEBOOKLM_BRIEF.md
+tests/fixtures/
+.githooks/
