@@ -1176,35 +1176,37 @@ class WaveformHud:
             track_line = track_line[:57] + "…"
         self.canvas.create_text(112 * s, 135 * s, text=track_line, fill="#e6f1ff", font=("Consolas", sf(15), "bold"), anchor="w")
 
-        # 3. Smoked-Obsidian Live Reader Bay
+        # 3. Smoked-Obsidian Live Reader Bay (pulled cleanly inside dark glass: y=197..232)
         reader_hdr = "NOW READING" if self.state == "speaking" else ("PAUSED AT" if self.state == "paused" else "LIVE READER")
-        self.canvas.create_text(80 * s, 190 * s, text=reader_hdr, fill=glow_color, font=("Segoe UI", sf(12), "bold"), anchor="w")
-        self.canvas.create_text(720 * s, 190 * s, text="Click ⌖ to Locate in Chat", fill="#94a3b8", font=("Segoe UI", sf(12)), anchor="e")
+        self.canvas.create_text(82 * s, 198 * s, text=reader_hdr, fill=glow_color, font=("Consolas", sf(10), "bold"), anchor="w")
+        self.canvas.create_text(718 * s, 198 * s, text="⌖ LOCATE IN CHAT", fill="#64748b", font=("Consolas", sf(10), "bold"), anchor="e")
 
-        wrapped = self._wrap_reader_segments(ctx_before, phrase, ctx_after, max_chars=74, max_lines=2)
+        wrapped = self._wrap_reader_segments(ctx_before, phrase, ctx_after, max_chars=70, max_lines=2)
         if not wrapped:
-            empty_msg = "Waiting for assistant response or voice command..."
-            self.canvas.create_text(80 * s, 218 * s, text=empty_msg, fill="#94a3b8", font=("Segoe UI", sf(15), "italic"), anchor="w")
+            empty_msg = "WAITING FOR ASSISTANT RESPONSE..."
+            self.canvas.create_text(82 * s, 219 * s, text=empty_msg, fill="#64748b", font=("Consolas", sf(13)), anchor="w")
         else:
-            line_y = 211 * s
+            hl_bg = "#2a1f08" if self.theme == "seiko" else "#0f1e36"
+            hl_fg = "#fef3c7" if self.theme == "seiko" else "#ffffff"
+            line_y = 213 * s
             for line_tokens in wrapped:
-                cur_x = 80 * s
+                cur_x = 82 * s
                 for tok, is_act in line_tokens:
-                    tok_font = ("Segoe UI", sf(15), "bold") if is_act else ("Segoe UI", sf(15))
-                    tok_color = "#ffffff" if is_act else "#e2e8f0"
+                    tok_font = ("Consolas", sf(13), "bold") if is_act else ("Consolas", sf(13))
+                    tok_color = hl_fg if is_act else "#cbd5e1"
                     item_id = self.canvas.create_text(cur_x, line_y, text=tok, fill=tok_color, font=tok_font, anchor="w")
                     bbox = self.canvas.bbox(item_id)
-                    if bbox and bbox[2] > 720 * s:
+                    if bbox and bbox[2] > 718 * s:
                         self.canvas.delete(item_id)
                         break
                     if is_act and bbox:
                         hl_rect = self.canvas.create_rectangle(
-                            bbox[0] - 3 * s, bbox[1], bbox[2] + 3 * s, bbox[3],
-                            fill="#1d4ed8", outline="#60a5fa", width=1,
+                            bbox[0] - 2 * s, bbox[1], bbox[2] + 2 * s, bbox[3],
+                            fill=hl_bg, outline=glow_color, width=1,
                         )
                         self.canvas.tag_lower(hl_rect, item_id)
                     cur_x = (bbox[2] + 6 * s) if bbox else (cur_x + (len(tok) * 8 + 6) * s)
-                line_y += 21 * s
+                line_y += 17 * s
 
         # 4. Seek Groove Progress & Slider Knob
         track_x1, track_x2 = 65 * s, 735 * s
