@@ -888,6 +888,58 @@ class WaveformHud:
         mins, secs = divmod(total, 60)
         return f"{mins}:{secs:02d}"
 
+    def _draw_seven_segment_text(self, x: float, cy: float, text: str, digit_h: float, on_color: str, off_color: str) -> float:
+        """Draw '90s Seiko digital-watch 7-segment LCD characters ('0'-'9', ':', '/') and return ending x."""
+        seg_map = {
+            "0": (1, 1, 1, 1, 1, 1, 0),
+            "1": (0, 1, 1, 0, 0, 0, 0),
+            "2": (1, 1, 0, 1, 1, 0, 1),
+            "3": (1, 1, 1, 1, 0, 0, 1),
+            "4": (0, 1, 1, 0, 0, 1, 1),
+            "5": (1, 0, 1, 1, 0, 1, 1),
+            "6": (1, 0, 1, 1, 1, 1, 1),
+            "7": (1, 1, 1, 0, 0, 0, 0),
+            "8": (1, 1, 1, 1, 1, 1, 1),
+            "9": (1, 1, 1, 1, 0, 1, 1),
+        }
+        dw = digit_h * 0.54
+        half_h = digit_h / 2.0
+        y_top = cy - half_h
+        y_mid = cy
+        y_bot = cy + half_h
+        lw = max(1.8, digit_h * 0.13)
+        pad = lw * 0.55
+        cur_x = x
+
+        for ch in text:
+            if ch in seg_map:
+                a, b, c, d, e, f, g = seg_map[ch]
+                xL, xR = cur_x + pad, cur_x + dw - pad
+                segs = [
+                    (a, xL + pad * 0.4, y_top, xR - pad * 0.4, y_top),
+                    (b, xR, y_top + pad * 0.4, xR, y_mid - pad * 0.4),
+                    (c, xR, y_mid + pad * 0.4, xR, y_bot - pad * 0.4),
+                    (d, xL + pad * 0.4, y_bot, xR - pad * 0.4, y_bot),
+                    (e, xL, y_mid + pad * 0.4, xL, y_bot - pad * 0.4),
+                    (f, xL, y_top + pad * 0.4, xL, y_mid - pad * 0.4),
+                    (g, xL + pad * 0.4, y_mid, xR - pad * 0.4, y_mid),
+                ]
+                for on, x1, y1, x2, y2 in segs:
+                    self.canvas.create_line(x1, y1, x2, y2, fill=(on_color if on else off_color), width=lw, capstyle="round")
+                cur_x += dw + lw * 1.4
+            elif ch == ":":
+                dot_r = max(1.3, lw * 0.65)
+                cx_dot = cur_x + dot_r + 1
+                self.canvas.create_oval(cx_dot - dot_r, cy - half_h * 0.42 - dot_r, cx_dot + dot_r, cy - half_h * 0.42 + dot_r, fill=on_color, outline="")
+                self.canvas.create_oval(cx_dot - dot_r, cy + half_h * 0.42 - dot_r, cx_dot + dot_r, cy + half_h * 0.42 + dot_r, fill=on_color, outline="")
+                cur_x += dot_r * 2 + lw * 1.6
+            elif ch == "/":
+                self.canvas.create_line(cur_x + dw * 0.45, y_top + 1, cur_x + 2, y_bot - 1, fill=on_color, width=max(1.5, lw * 0.85), capstyle="round")
+                cur_x += dw * 0.55 + lw
+            elif ch == " ":
+                cur_x += dw * 0.35
+        return cur_x
+
     @staticmethod
     def _wrap_reader_segments(before: str, active: str, after: str, max_chars: int = 68, max_lines: int = 3) -> list[list[tuple[str, bool]]]:
         """
@@ -997,16 +1049,16 @@ class WaveformHud:
             session_tag = header_status[:end_b + 1].strip()
         if toast_msg:
             header_status = toast_msg
-            hdr_color = "#0369a1" if is_light_metal else glow_color
+            hdr_color = "#0f172a" if is_light_metal else glow_color
         elif self._hover_hint:
             header_status = self._hover_hint
-            hdr_color = "#0369a1" if is_light_metal else glow_color
+            hdr_color = "#0f172a" if is_light_metal else glow_color
         else:
             if session_tag and ch_label:
                 header_status = f"{session_tag} • {ch_label}"
             elif ch_label:
                 header_status = ch_label
-            hdr_color = "#1e3a8a" if is_light_metal else "#93c5fd"
+            hdr_color = "#0f172a" if is_light_metal else "#93c5fd"
 
         max_hdr_x = w - 172 * s
         hdr_id = self.canvas.create_text(next_x, 25 * s, text=f"|  {header_status}", fill=hdr_color, font=("Segoe UI", sf(14), "bold"), anchor="w")
@@ -1023,9 +1075,11 @@ class WaveformHud:
         self.canvas.create_text(112 * s, 90 * s, text=play_glyph, fill=glyph_color, font=("Segoe UI Symbol", sf(18), "bold"), anchor="w")
 
         time_str = f"{self._format_mmss(elapsed_s)} / {self._format_mmss(total_s)}" if total_s > 0 else self._format_mmss(elapsed_s)
-        time_id = self.canvas.create_text(138 * s, 90 * s, text=time_str, fill="#f0f7ff", font=("Consolas", sf(25), "bold"), anchor="w")
-        time_bbox = self.canvas.bbox(time_id)
-        badge_x = (time_bbox[2] + 16 * s) if time_bbox else 320 * s
+        time_end_x = self._draw_seven_segment_text(
+            138 * s, 90 * s, time_str, digit_h=22 * s,
+            on_color="#e0f7ff", off_color="#0e2a5c",
+        )
+        badge_x = time_end_x + 14 * s
 
         # Only show PAUSED or Queue badge in LCD (avoid redundant SPEAKING badge next to timer)
         if self.state == "paused":
