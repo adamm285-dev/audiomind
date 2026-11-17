@@ -837,8 +837,33 @@ class WaveformHud:
         col_x1, col_x2 = cx1 * s, cx2 * s
         sy1, sy2 = y1 * s, y2 * s
         is_exp_mode = (self._active_mode() == "expanded")
+        is_light_metal = getattr(self, "skin_finish", "dark") in ("stainless", "titanium")
         f_sz = -max(9, int(round((14 if is_exp_mode else 10) * s)))
         loc_sz = -max(10, int(round((15 if is_exp_mode else 11) * s)))
+
+        if is_exp_mode:
+            # Expanded skin has sculpted 3D hardware pads baked into the titlebar; draw crisp icon + hover/press rim only
+            base_ink = "#0f172a" if is_light_metal else "#f1f5f9"
+            hover_ink = "#1d4ed8" if is_light_metal else glow_color
+            btn_specs = [
+                ("expand", exp_x1, exp_x2, "🗕" if self.expanded else "⤢", f_sz),
+                ("locate", loc_x1, loc_x2, "⌖", loc_sz),
+                ("collapse", col_x1, col_x2, "▼", f_sz),
+            ]
+            for bid, bx1, bx2, glyph, g_sz in btn_specs:
+                is_hov = (self.hovered_button == bid)
+                is_prs = (self.pressed_button == bid)
+                cy_b = (sy1 + sy2) / 2 + (1 if is_prs else 0)
+                if is_prs:
+                    self._draw_rounded_rect(bx1, sy1, bx2, sy2, 4, fill="", outline="#ffffff", width=1)
+                    ink = "#ffffff" if not is_light_metal else "#0f172a"
+                elif is_hov:
+                    self._draw_rounded_rect(bx1, sy1, bx2, sy2, 4, fill="", outline=hover_ink, width=1)
+                    ink = hover_ink
+                else:
+                    ink = base_ink
+                self.canvas.create_text((bx1 + bx2) / 2, cy_b, text=glyph, fill=ink, font=("Segoe UI Symbol", g_sz, "bold"))
+            return
 
         # Expand / Minimize button [⤢] or [🗕]
         exp_hover = (self.hovered_button == "expand")
