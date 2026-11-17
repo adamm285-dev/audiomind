@@ -81,10 +81,10 @@ This repository is that complete, end-to-end full-stack voice companion system.
 ## Subsystems
 
 ### 1. Desktop Voice Harness (`desktop/`)
-* **System Tray & Waveform HUD**: Native Windows notification tray app with a dark menu, real-time status indicators (Idle, Listening, Thinking, Speaking, Paused), and a floating translucent waveform HUD animating real-time microphone and speaker audio. **Click anywhere on the waveform HUD** to interactively pause or resume speech.
+* **System Tray & Winamp-Style Car-Deck HUD**: Native Windows notification tray app with a dark menu, **Launch on Windows Startup** toggle, **HUD Scale** presets (`75%` to `150%`), and a uniform `'90s` dark gunmetal car-deck HUD in both compact (`480x38` / `480x84`) and **Expanded Reader** (`⤢`) modes. The expanded deck displays a digital `M:SS / M:SS` timer, 14-band spectrum analyzer, chapter marquee, speed cycle pill, and a live highlighted **Now Reading** transcript panel so you can glance at what is being read or click `⌖` to locate it in chat.
 
 <p align="center">
-  <img src="media/audiomindhudpic.PNG" alt="AudioMind CD-Player Waveform HUD" width="500">
+  <img src="media/audiomindhudpic.PNG" alt="AudioMind Expanded Winamp-Style Car-Deck HUD" width="600">
 </p>
 
 <p align="center">

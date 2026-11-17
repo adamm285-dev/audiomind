@@ -41,6 +41,10 @@ class SpeechPlayer:
         self.chapter_titles: list[str] = ["Overview"]
         self._stream_complete: bool = True
 
+        # Sample-accurate phrase locator segment registry
+        self.phrase_segments: list[dict] = []
+        self._last_appended_range: tuple[int, int] = (0, 0)
+
     def _callback(self, outdata, frames, time_info, status):
         with self._lock:
             if not self._is_playing or self._is_paused:
@@ -121,6 +125,8 @@ class SpeechPlayer:
                 len(self.chapter_titles),
                 total_planned_chapters or 0
             )
+            self.phrase_segments = []
+            self._last_appended_range = (0, len(audio_data) if audio_data is not None else 0)
 
         if on_start:
             try:
@@ -164,7 +170,8 @@ class SpeechPlayer:
         self,
         pcm_chunk: np.ndarray,
         chapter_title: str = "",
-        pause_sec: float = 0.25
+        pause_sec: float = 0.25,
+        new_chapter: bool = True
     ):
         """Append a newly synthesized PCM chunk to the active audio buffer with an optional pause."""
         if pcm_chunk is None or len(pcm_chunk) == 0:
@@ -174,6 +181,7 @@ class SpeechPlayer:
                 self.audio_data = pcm_chunk
                 self.chapter_markers = [0]
                 self.chapter_titles = [chapter_title or "Overview"]
+                self._last_appended_range = (0, len(pcm_chunk))
             else:
                 silence_frames = int(pause_sec * self.samplerate)
                 channels = self.audio_data.shape[1] if self.audio_data.ndim == 2 else 1
@@ -183,14 +191,201 @@ class SpeechPlayer:
                     silence = np.zeros(silence_frames, dtype=np.float32)
 
                 new_marker = len(self.audio_data) + silence_frames
-                self.audio_data = np.concatenate([self.audio_data, silence, pcm_chunk])
-                self.chapter_markers.append(new_marker)
-                ch_idx = len(self.chapter_markers) - 1
-                if ch_idx < len(self.chapter_titles):
-                    if chapter_title and (not self.chapter_titles[ch_idx] or self.chapter_titles[ch_idx].startswith("Chapter ")):
-                        self.chapter_titles[ch_idx] = chapter_title
+                if silence_frames > 0:
+                    self.audio_data = np.concatenate([self.audio_data, silence, pcm_chunk])
                 else:
-                    self.chapter_titles.append(chapter_title or f"Chapter {len(self.chapter_markers)}")
+                    self.audio_data = np.concatenate([self.audio_data, pcm_chunk])
+
+                self._last_appended_range = (new_marker, len(self.audio_data))
+
+                if new_chapter:
+                    self.chapter_markers.append(new_marker)
+                    ch_idx = len(self.chapter_markers) - 1
+                    if ch_idx < len(self.chapter_titles):
+                        if chapter_title and (not self.chapter_titles[ch_idx] or self.chapter_titles[ch_idx].startswith("Chapter ")):
+                            self.chapter_titles[ch_idx] = chapter_title
+                    else:
+                        self.chapter_titles.append(chapter_title or f"Chapter {len(self.chapter_markers)}")
+
+    def register_segment_tokens(
+        self,
+        tokens: list[tuple[int, str]],
+        start_sample: Optional[int] = None,
+        end_sample: Optional[int] = None,
+        chapter_title: str = ""
+    ):
+        """Registers sample-bounded visible word tokens for Ctrl+F phrase location."""
+        if not tokens:
+            return
+        with self._lock:
+            if start_sample is not None and end_sample is not None:
+                s, e = int(start_sample), int(end_sample)
+            else:
+                s, e = self._last_appended_range
+
+            if e <= s:
+                return
+
+            speech_s, speech_e = s, e
+            if self.audio_data is not None and len(self.audio_data) >= e:
+                seg_audio = self.audio_data[s:e]
+                seg_len = e - s
+                hop = 480  # 10ms @ 48kHz
+                if seg_len >= hop * 2:
+                    n_frames = seg_len // hop
+                    if seg_audio.ndim == 2:
+                        trimmed = seg_audio[:n_frames * hop].reshape(n_frames, hop, -1)
+                        env = np.max(np.abs(trimmed), axis=(1, 2))
+                    else:
+                        trimmed = seg_audio[:n_frames * hop].reshape(n_frames, hop)
+                        env = np.max(np.abs(trimmed), axis=1)
+                    active_frames = np.flatnonzero(env > 0.006)
+                    if len(active_frames) > 0:
+                        cand_s = s + int(active_frames[0]) * hop
+                        cand_e = min(e, s + (int(active_frames[-1]) + 1) * hop)
+                        if (cand_e - cand_s) >= int(0.6 * seg_len):
+                            speech_s, speech_e = cand_s, cand_e
+
+            cum_weights = []
+            total_weight = 0.0
+            for _, word in tokens:
+                w_len = max(2.0, float(len(word)))
+                if word.endswith(('.', '!', '?')):
+                    w_len += 5.0
+                elif word.endswith((',', ';', ':')):
+                    w_len += 2.5
+                total_weight += w_len
+                cum_weights.append(total_weight)
+
+            self.phrase_segments.append({
+                "start_sample": s,
+                "end_sample": e,
+                "speech_start": speech_s,
+                "speech_end": speech_e,
+                "tokens": list(tokens),
+                "cum_weights": cum_weights,
+                "total_weight": total_weight,
+                "chapter_title": chapter_title,
+            })
+
+    @staticmethod
+    def _clean_search_phrase(words: list[str]) -> str:
+        """Joins words into a clean Ctrl+F query, preserving balanced parens/brackets like foo()."""
+        if not words:
+            return ""
+        phrase = " ".join(words).strip()
+        phrase = phrase.lstrip(".,;:!?()[]{}\"' \t")
+        phrase = phrase.rstrip(".,;:!?\"' \t")
+        while phrase.endswith(")") and "(" not in phrase:
+            phrase = phrase[:-1].rstrip(".,;:!?\"' \t")
+        while phrase.endswith("]") and "[" not in phrase:
+            phrase = phrase[:-1].rstrip(".,;:!?\"' \t")
+        return phrase.strip()
+
+    def get_locator_at_sample(self, sample_idx: Optional[int] = None, target_words: int = 6) -> Optional[dict]:
+        """Resolves a verbatim Ctrl+F search phrase and section telemetry at the active audio sample."""
+        with self._lock:
+            if not self.phrase_segments:
+                return None
+
+            idx = self.current_idx if sample_idx is None else max(0, int(sample_idx))
+            seg = None
+            for candidate in self.phrase_segments:
+                if candidate["start_sample"] <= idx <= candidate["end_sample"]:
+                    seg = candidate
+                    break
+
+            if seg is None:
+                seg = min(
+                    self.phrase_segments,
+                    key=lambda c: min(abs(idx - c["start_sample"]), abs(idx - c["end_sample"]))
+                )
+
+            tokens = seg["tokens"]
+            if not tokens:
+                return None
+
+            span = max(1, seg["speech_end"] - seg["speech_start"])
+            frac = max(0.0, min(1.0, (idx - seg["speech_start"]) / span))
+            target_w = frac * seg["total_weight"]
+
+            tok_idx = len(tokens) - 1
+            for i, cw in enumerate(seg["cum_weights"]):
+                if cw >= target_w:
+                    tok_idx = i
+                    break
+
+            # Group tokens into contiguous runs by block_id
+            runs: list[tuple[int, int, int, list[str]]] = []
+            run_start = 0
+            cur_block = tokens[0][0]
+            cur_words = [tokens[0][1]]
+            for i in range(1, len(tokens)):
+                b_id, word = tokens[i]
+                if b_id == cur_block:
+                    cur_words.append(word)
+                else:
+                    runs.append((cur_block, run_start, i - 1, cur_words))
+                    cur_block = b_id
+                    run_start = i
+                    cur_words = [word]
+            runs.append((cur_block, run_start, len(tokens) - 1, cur_words))
+
+            active_run_idx = 0
+            local_i = 0
+            for r_i, (_, r_start, r_end, _) in enumerate(runs):
+                if r_start <= tok_idx <= r_end:
+                    active_run_idx = r_i
+                    local_i = tok_idx - r_start
+                    break
+
+            run_words = runs[active_run_idx][3]
+            if len(run_words) < 3 and len(runs) > 1:
+                switched = False
+                for fwd in range(active_run_idx + 1, len(runs)):
+                    if len(runs[fwd][3]) >= 3:
+                        run_words = runs[fwd][3]
+                        local_i = 0
+                        switched = True
+                        break
+                if not switched:
+                    for bwd in range(active_run_idx - 1, -1, -1):
+                        if len(runs[bwd][3]) >= 3:
+                            run_words = runs[bwd][3]
+                            local_i = len(run_words) - 1
+                            break
+
+            half = target_words // 2
+            w_start = max(0, min(local_i - half + 1, len(run_words) - target_words))
+            w_end = min(len(run_words), w_start + target_words)
+            phrase = self._clean_search_phrase(run_words[w_start:w_end])
+            if not phrase:
+                phrase = self._clean_search_phrase(run_words)
+
+            ctx_start = max(0, w_start - 10)
+            ctx_end = min(len(run_words), w_end + 14)
+            context_before = self._clean_search_phrase(run_words[ctx_start:w_start]) if ctx_start < w_start else ""
+            context_after = self._clean_search_phrase(run_words[w_end:ctx_end]) if w_end < ctx_end else ""
+
+            total_len = (
+                len(self.audio_data)
+                if self.audio_data is not None and len(self.audio_data) > 0
+                else seg["end_sample"]
+            )
+            pct = int(min(100, max(0, round(100.0 * idx / max(1, total_len)))))
+
+            return {
+                "phrase": phrase,
+                "context_before": context_before,
+                "context_after": context_after,
+                "active_word": tokens[tok_idx][1],
+                "chapter": self.current_chapter_index + 1,
+                "total_chapters": self.total_chapters,
+                "chapter_title": self.current_chapter_title,
+                "progress_pct": pct,
+                "position_seconds": idx / self.samplerate,
+                "duration_seconds": total_len / self.samplerate,
+            }
 
     def set_stream_complete(self, complete: bool = True):
         """Signals whether the producer has finished appending chapters to the stream."""

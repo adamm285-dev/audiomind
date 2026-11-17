@@ -318,6 +318,38 @@ def get_speech_speed() -> float:
     """Returns global speech playback speed multiplier."""
     return DEFAULT_SPEED
 
+def split_text_for_streaming(text: str, max_words_per_chunk: int = 45) -> list[str]:
+    """
+    Splits a chapter body into sentence-aligned sub-chunks of ~max_words_per_chunk words
+    so that Kokoro neural synthesis streams smoothly in ~3-5s increments without ever
+    blocking or starving audio playback on long chapters.
+    """
+    if not text or not text.strip():
+        return []
+    words = text.split()
+    if len(words) <= max_words_per_chunk + 15:
+        return [text.strip()]
+
+    sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', text.strip()) if s.strip()]
+    if len(sentences) <= 1:
+        return [text.strip()]
+
+    chunks = []
+    cur_buf = []
+    cur_words = 0
+    for s in sentences:
+        s_words = len(s.split())
+        if cur_words > 0 and (cur_words + s_words) > max_words_per_chunk:
+            chunks.append(" ".join(cur_buf))
+            cur_buf = [s]
+            cur_words = s_words
+        else:
+            cur_buf.append(s)
+            cur_words += s_words
+    if cur_buf:
+        chunks.append(" ".join(cur_buf))
+    return chunks
+
 def synth_kokoro_pcm(text: str, voice: str = DEFAULT_VOICE, speed: float = None) -> np.ndarray:
     """
     Synthesizes speech using Kokoro-ONNX local neural model.
@@ -455,21 +487,50 @@ async def speak_async(
 
     chapters = extract_chapters_from_text(text)
     try:
-        from desktop.audio.read_aloud import clean_markdown_for_speech
+        from desktop.audio.read_aloud import (
+            clean_markdown_for_speech,
+            extract_visible_blocks_from_markdown,
+            align_subchunks_to_visible_blocks,
+        )
     except ImportError:
         try:
-            from audio.read_aloud import clean_markdown_for_speech
+            from audio.read_aloud import (
+                clean_markdown_for_speech,
+                extract_visible_blocks_from_markdown,
+                align_subchunks_to_visible_blocks,
+            )
         except ImportError:
             clean_markdown_for_speech = lambda t: t
+            extract_visible_blocks_from_markdown = lambda t: [t.strip()] if t and t.strip() else []
+            align_subchunks_to_visible_blocks = lambda scs, vbs: [
+                [(i, w) for w in sc.split() if w.strip()] for i, sc in enumerate(scs)
+            ]
+
+    def _register_player_segment(tokens, start_sample=None, end_sample=None, chapter_title=""):
+        if global_player is not None and hasattr(global_player, "register_segment_tokens") and tokens:
+            try:
+                global_player.register_segment_tokens(
+                    tokens,
+                    start_sample=start_sample,
+                    end_sample=end_sample,
+                    chapter_title=chapter_title,
+                )
+            except Exception:
+                pass
 
     cleaned_chapters = []
+    chapter_vis_blocks = []
     for title, body in chapters:
         c_body = clean_markdown_for_speech(body)
         if c_body and c_body.strip():
             cleaned_chapters.append((title, c_body))
+            chapter_vis_blocks.append(extract_visible_blocks_from_markdown(body))
     if cleaned_chapters:
         chapters = cleaned_chapters
+    else:
+        chapter_vis_blocks = [extract_visible_blocks_from_markdown(body) for _, body in chapters]
 
+    full_vis_blocks = extract_visible_blocks_from_markdown(text)
     clean_text = clean_markdown_for_speech(text)
     clean_text = normalize_phonetics(clean_text)
 
@@ -478,29 +539,68 @@ async def speak_async(
     if kokoro is not None:
         try:
             if len(chapters) > 1 and hasattr(global_player, "append_pcm"):
-                # Streaming chapter synthesis: Chapter 1 first for sub-1s Time-To-First-Audio (TTFA)
-                norm_c1 = normalize_phonetics(chapters[0][1])
-                c1_pcm = synth_kokoro_pcm(norm_c1, voice=voice, speed=effective_speed)
-                if len(c1_pcm) > 0:
-                    planned_titles = [c[0] for c in chapters]
-                    global_player.play_pcm(
-                        c1_pcm,
-                        chapter_markers=[0],
-                        chapter_titles=planned_titles,
-                        total_planned_chapters=len(chapters),
-                        stream_complete=False,
-                        on_start=on_start,
-                        on_level=on_level,
-                        on_finish=on_finish
-                    )
-                    # Synthesize subsequent chapters in-stride while Chapter 1 actively plays
-                    for i in range(1, len(chapters)):
-                        if hasattr(global_player, "is_active") and not global_player.is_active:
+                # Sentence-chunked streaming chapter synthesis:
+                # Synthesize first sub-chunk of Chapter 1 for sub-2s Time-To-First-Audio (TTFA),
+                # and stream all remaining sub-chunks and chapters seamlessly without buffer underruns.
+                planned_titles = [c[0] for c in chapters]
+                started_playback = False
+
+                for ch_idx, (ch_title, ch_body) in enumerate(chapters):
+                    if started_playback and hasattr(global_player, "is_active") and not global_player.is_active:
+                        break
+                    sub_chunks = split_text_for_streaming(normalize_phonetics(ch_body), max_words_per_chunk=45)
+                    if not sub_chunks:
+                        continue
+
+                    vis_blocks = chapter_vis_blocks[ch_idx] if ch_idx < len(chapter_vis_blocks) else []
+                    aligned_subs = align_subchunks_to_visible_blocks(sub_chunks, vis_blocks)
+
+                    is_first_sub_of_chapter = True
+                    for sub_i, sub_text in enumerate(sub_chunks):
+                        if started_playback and hasattr(global_player, "is_active") and not global_player.is_active:
                             break
-                        norm_body = normalize_phonetics(chapters[i][1])
-                        c_pcm = synth_kokoro_pcm(norm_body, voice=voice, speed=effective_speed)
-                        if len(c_pcm) > 0:
-                            global_player.append_pcm(c_pcm, chapter_title=chapters[i][0], pause_sec=0.25)
+                        sub_pcm = synth_kokoro_pcm(sub_text, voice=voice, speed=effective_speed)
+                        if len(sub_pcm) == 0:
+                            continue
+
+                        seg_tokens = aligned_subs[sub_i] if sub_i < len(aligned_subs) else []
+                        if not started_playback:
+                            global_player.play_pcm(
+                                sub_pcm,
+                                chapter_markers=[0],
+                                chapter_titles=planned_titles,
+                                total_planned_chapters=len(chapters),
+                                stream_complete=False,
+                                on_start=on_start,
+                                on_level=on_level,
+                                on_finish=on_finish
+                            )
+                            _register_player_segment(seg_tokens, start_sample=0, end_sample=len(sub_pcm), chapter_title=ch_title)
+                            started_playback = True
+                            is_first_sub_of_chapter = False
+                        else:
+                            if is_first_sub_of_chapter:
+                                global_player.append_pcm(
+                                    sub_pcm,
+                                    chapter_title=ch_title,
+                                    pause_sec=0.25,
+                                    new_chapter=True
+                                )
+                                _register_player_segment(seg_tokens, chapter_title=ch_title)
+                                is_first_sub_of_chapter = False
+                            else:
+                                try:
+                                    global_player.append_pcm(
+                                        sub_pcm,
+                                        chapter_title=ch_title,
+                                        pause_sec=0.08,
+                                        new_chapter=False
+                                    )
+                                except TypeError:
+                                    global_player.append_pcm(sub_pcm, chapter_title=ch_title, pause_sec=0.08)
+                                _register_player_segment(seg_tokens, chapter_title=ch_title)
+
+                if started_playback:
                     global_player.set_stream_complete(True)
                     global_player.wait()
                     return
@@ -508,21 +608,28 @@ async def speak_async(
                 # Non-streaming batch fallback (for players without dynamic append support)
                 pcm_chunks = []
                 titles = []
-                for title, body in chapters:
+                batch_vis = []
+                for ch_idx, (title, body) in enumerate(chapters):
                     norm_body = normalize_phonetics(body)
                     c_pcm = synth_kokoro_pcm(norm_body, voice=voice, speed=effective_speed)
                     if len(c_pcm) > 0:
                         pcm_chunks.append(c_pcm)
                         titles.append(title)
+                        vis_blocks = chapter_vis_blocks[ch_idx] if ch_idx < len(chapter_vis_blocks) else []
+                        aligned = align_subchunks_to_visible_blocks([norm_body], vis_blocks)
+                        batch_vis.append(aligned[0] if aligned else [])
                 if pcm_chunks:
                     silence = np.zeros((int(0.25 * 48000), 2), dtype=np.float32)
                     combined = []
                     markers = []
+                    seg_ranges = []
                     curr_s = 0
                     for i, pcm in enumerate(pcm_chunks):
                         markers.append(curr_s)
                         combined.append(pcm)
+                        seg_start = curr_s
                         curr_s += len(pcm)
+                        seg_ranges.append((seg_start, curr_s, batch_vis[i], titles[i]))
                         if i < len(pcm_chunks) - 1:
                             combined.append(silence)
                             curr_s += len(silence)
@@ -536,22 +643,57 @@ async def speak_async(
                             on_level=on_level,
                             on_finish=on_finish
                         )
+                        for s_start, s_end, s_toks, s_title in seg_ranges:
+                            _register_player_segment(s_toks, start_sample=s_start, end_sample=s_end, chapter_title=s_title)
                         global_player.wait()
                         return
             else:
-                c_pcm = synth_kokoro_pcm(clean_text, voice=voice, speed=effective_speed)
-                if len(c_pcm) > 0:
-                    global_player.play_pcm(
-                        c_pcm,
-                        chapter_markers=[0],
-                        chapter_titles=[chapters[0][0] if chapters else "Overview"],
-                        stream_complete=True,
-                        on_start=on_start,
-                        on_level=on_level,
-                        on_finish=on_finish
-                    )
-                    global_player.wait()
-                    return
+                sub_chunks = split_text_for_streaming(clean_text, max_words_per_chunk=45)
+                aligned_subs = align_subchunks_to_visible_blocks(sub_chunks, full_vis_blocks)
+                if len(sub_chunks) > 1 and hasattr(global_player, "append_pcm"):
+                    c1_pcm = synth_kokoro_pcm(sub_chunks[0], voice=voice, speed=effective_speed)
+                    if len(c1_pcm) > 0:
+                        ch_title = chapters[0][0] if chapters else "Overview"
+                        global_player.play_pcm(
+                            c1_pcm,
+                            chapter_markers=[0],
+                            chapter_titles=[ch_title],
+                            total_planned_chapters=1,
+                            stream_complete=False,
+                            on_start=on_start,
+                            on_level=on_level,
+                            on_finish=on_finish
+                        )
+                        _register_player_segment(aligned_subs[0] if aligned_subs else [], start_sample=0, end_sample=len(c1_pcm), chapter_title=ch_title)
+                        for sub_idx, s_chunk in enumerate(sub_chunks[1:], start=1):
+                            if hasattr(global_player, "is_active") and not global_player.is_active:
+                                break
+                            s_pcm = synth_kokoro_pcm(s_chunk, voice=voice, speed=effective_speed)
+                            if len(s_pcm) > 0:
+                                try:
+                                    global_player.append_pcm(s_pcm, chapter_title=ch_title, pause_sec=0.08, new_chapter=False)
+                                except TypeError:
+                                    global_player.append_pcm(s_pcm, chapter_title=ch_title, pause_sec=0.08)
+                                _register_player_segment(aligned_subs[sub_idx] if sub_idx < len(aligned_subs) else [], chapter_title=ch_title)
+                        global_player.set_stream_complete(True)
+                        global_player.wait()
+                        return
+                else:
+                    c_pcm = synth_kokoro_pcm(clean_text, voice=voice, speed=effective_speed)
+                    if len(c_pcm) > 0:
+                        ch_title = chapters[0][0] if chapters else "Overview"
+                        global_player.play_pcm(
+                            c_pcm,
+                            chapter_markers=[0],
+                            chapter_titles=[ch_title],
+                            stream_complete=True,
+                            on_start=on_start,
+                            on_level=on_level,
+                            on_finish=on_finish
+                        )
+                        _register_player_segment(aligned_subs[0] if aligned_subs else [], start_sample=0, end_sample=len(c_pcm), chapter_title=ch_title)
+                        global_player.wait()
+                        return
         except Exception as e:
             print(f"[!] Kokoro speech synthesis failed, falling back to secondary tier: {e}")
 
@@ -572,7 +714,8 @@ async def speak_async(
 
             pcm_chunks = []
             titles = []
-            for i, (title, _) in enumerate(chapters):
+            edge_vis = []
+            for i, (title, body) in enumerate(chapters):
                 mp3_data = mp3_list[i] if i < len(mp3_list) else b""
                 if not mp3_data and _EDGE_TTS_HEALTHY:
                     notice_text = f"Part {i + 1} could not be read."
@@ -585,6 +728,9 @@ async def speak_async(
                     pcm = decode_mp3_to_pcm(mp3_data)
                     pcm_chunks.append(pcm)
                     titles.append(title)
+                    vis_blocks = chapter_vis_blocks[i] if i < len(chapter_vis_blocks) else []
+                    aligned = align_subchunks_to_visible_blocks([body], vis_blocks)
+                    edge_vis.append(aligned[0] if aligned else [])
                 else:
                     raise RuntimeError(f"Failed to synthesize chapter {i + 1} or its spoken notice.")
 
@@ -592,11 +738,14 @@ async def speak_async(
                 silence = np.zeros((int(0.30 * 48000), 2), dtype=np.float32)
                 combined = []
                 markers = []
+                seg_ranges = []
                 curr_s = 0
                 for i, pcm in enumerate(pcm_chunks):
                     markers.append(curr_s)
                     combined.append(pcm)
+                    seg_start = curr_s
                     curr_s += len(pcm)
+                    seg_ranges.append((seg_start, curr_s, edge_vis[i], titles[i]))
                     if i < len(pcm_chunks) - 1:
                         combined.append(silence)
                         curr_s += len(silence)
@@ -611,6 +760,8 @@ async def speak_async(
                         on_level=on_level,
                         on_finish=on_finish
                     )
+                    for s_start, s_end, s_toks, s_title in seg_ranges:
+                        _register_player_segment(s_toks, start_sample=s_start, end_sample=s_end, chapter_title=s_title)
                     global_player.wait()
                     return
         except Exception as e:
@@ -622,14 +773,17 @@ async def speak_async(
             mp3_data = await _synth_one(clean_text, voice=edge_voice, rate=rate, pitch=pitch)
             if mp3_data:
                 audio_f32 = decode_mp3_to_pcm(mp3_data)
+                ch_title = chapters[0][0] if chapters else "Overview"
                 global_player.play_pcm(
                     audio_f32,
                     chapter_markers=[0],
-                    chapter_titles=[chapters[0][0] if chapters else "Overview"],
+                    chapter_titles=[ch_title],
                     on_start=on_start,
                     on_level=on_level,
                     on_finish=on_finish
                 )
+                aligned = align_subchunks_to_visible_blocks([clean_text], full_vis_blocks)
+                _register_player_segment(aligned[0] if aligned else [], start_sample=0, end_sample=len(audio_f32), chapter_title=ch_title)
                 global_player.wait()
                 return
         except Exception as e:
@@ -651,27 +805,36 @@ async def speak_async(
                 on_level=on_level,
                 on_finish=on_finish
             )
+            vis0 = chapter_vis_blocks[0] if chapter_vis_blocks else []
+            aligned0 = align_subchunks_to_visible_blocks([chapters[0][1]], vis0)
+            _register_player_segment(aligned0[0] if aligned0 else [], start_sample=0, end_sample=len(c1_pcm), chapter_title=chapters[0][0])
             for i in range(1, len(chapters)):
                 if not is_speech_active():
                     break
                 ci_pcm = synth_sapi_pcm(chapters[i][1])
                 if len(ci_pcm) > 0:
                     global_player.append_pcm(ci_pcm, chapter_title=chapters[i][0], pause_sec=0.25)
+                    vis_i = chapter_vis_blocks[i] if i < len(chapter_vis_blocks) else []
+                    aligned_i = align_subchunks_to_visible_blocks([chapters[i][1]], vis_i)
+                    _register_player_segment(aligned_i[0] if aligned_i else [], chapter_title=chapters[i][0])
             global_player.set_stream_complete(True)
             global_player.wait()
             return
 
     sapi_pcm = synth_sapi_pcm(clean_text)
     if len(sapi_pcm) > 0:
+        ch_title = chapters[0][0] if chapters else "Overview"
         global_player.play_pcm(
             sapi_pcm,
             chapter_markers=[0],
-            chapter_titles=[chapters[0][0] if chapters else "Overview"],
+            chapter_titles=[ch_title],
             stream_complete=True,
             on_start=on_start,
             on_level=on_level,
             on_finish=on_finish
         )
+        aligned = align_subchunks_to_visible_blocks([clean_text], full_vis_blocks)
+        _register_player_segment(aligned[0] if aligned else [], start_sample=0, end_sample=len(sapi_pcm), chapter_title=ch_title)
         global_player.wait()
 
 def stop_speech():
@@ -772,6 +935,40 @@ def is_speech_active() -> bool:
 def get_speech_player() -> SpeechPlayer:
     """Returns the underlying SpeechPlayer instance."""
     return global_player
+
+def get_current_locator_info(target_words: int = 6) -> Optional[dict]:
+    """Returns sample-accurate Ctrl+F phrase and section info for active playback, or None."""
+    try:
+        if global_player is not None and getattr(global_player, "is_active", False) and hasattr(global_player, "get_locator_at_sample"):
+            return global_player.get_locator_at_sample(target_words=target_words)
+    except Exception:
+        pass
+    return None
+
+def extract_fallback_locator_phrase(raw_text: str, target_words: int = 6) -> str:
+    """Extracts a clean verbatim Ctrl+F phrase from raw Markdown when active playback just ended."""
+    if not raw_text or not raw_text.strip():
+        return ""
+    try:
+        from desktop.audio.read_aloud import extract_visible_blocks_from_markdown
+    except ImportError:
+        try:
+            from audio.read_aloud import extract_visible_blocks_from_markdown
+        except ImportError:
+            extract_visible_blocks_from_markdown = lambda t: [t.strip()] if t and t.strip() else []
+
+    blocks = extract_visible_blocks_from_markdown(raw_text)
+    if not blocks:
+        return ""
+    chosen = blocks[-1]
+    for blk in reversed(blocks):
+        if len(blk.split()) >= 3:
+            chosen = blk
+            break
+    words = chosen.split()[:target_words]
+    if SpeechPlayer is not None and hasattr(SpeechPlayer, "_clean_search_phrase"):
+        return SpeechPlayer._clean_search_phrase(words)
+    return " ".join(words).strip()
 
 def speak(
     text: str, 

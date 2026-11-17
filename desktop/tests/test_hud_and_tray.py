@@ -728,11 +728,11 @@ def test_waveform_hud_cd_player_transport_controls():
     # 2. Test button hit testing when expanded (height = 84, width = 480)
     hud.height = 84
     assert hud._hit_test_button(45, 62) == "prev"
-    assert hud._hit_test_button(119, 62) == "rewind"
-    assert hud._hit_test_button(193, 62) == "play_pause"
-    assert hud._hit_test_button(267, 62) == "forward"
-    assert hud._hit_test_button(341, 62) == "next"
-    assert hud._hit_test_button(415, 62) == "skip"
+    assert hud._hit_test_button(98, 62) == "rewind"
+    assert hud._hit_test_button(150, 62) == "play_pause"
+    assert hud._hit_test_button(203, 62) == "forward"
+    assert hud._hit_test_button(256, 62) == "next"
+    assert hud._hit_test_button(310, 62) == "skip"
     # Row 1 or outside bounds returns None
     assert hud._hit_test_button(50, 20) is None
     assert hud._hit_test_button(45, 40) is None
@@ -759,11 +759,11 @@ def test_waveform_hud_cd_player_transport_controls():
 
     # Click each of the 6 buttons
     hud._on_canvas_click(DummyEvent(45, 62))
-    hud._on_canvas_click(DummyEvent(119, 62))
-    hud._on_canvas_click(DummyEvent(193, 62))
-    hud._on_canvas_click(DummyEvent(267, 62))
-    hud._on_canvas_click(DummyEvent(341, 62))
-    hud._on_canvas_click(DummyEvent(415, 62))
+    hud._on_canvas_click(DummyEvent(98, 62))
+    hud._on_canvas_click(DummyEvent(150, 62))
+    hud._on_canvas_click(DummyEvent(203, 62))
+    hud._on_canvas_click(DummyEvent(256, 62))
+    hud._on_canvas_click(DummyEvent(310, 62))
     assert events == ["prev", "rewind", "play_pause", "forward", "next", "skip"]
 
     # Click outside buttons (row 1 LCD screen) triggers general on_click
@@ -776,14 +776,14 @@ def test_waveform_hud_cd_player_transport_controls():
     assert hud.hovered_button == "prev"
     assert hud._hover_hint == "⏮  REPEAT / PREV CHAPTER"
 
-    hud._on_mouse_move(DummyEvent(119, 62))
+    hud._on_mouse_move(DummyEvent(98, 62))
     assert hud.hovered_button == "rewind"
     assert hud._hover_hint == "⏪  REWIND 5 SECONDS"
 
-    hud._on_mouse_move(DummyEvent(193, 62))
+    hud._on_mouse_move(DummyEvent(150, 62))
     assert hud.hovered_button == "play_pause"
 
-    hud._on_mouse_move(DummyEvent(415, 62))
+    hud._on_mouse_move(DummyEvent(310, 62))
     assert hud.hovered_button == "skip"
     assert hud._hover_hint == "⏹  SKIP CURRENT OUTPUT"
 
@@ -1326,6 +1326,1025 @@ def test_capture_highlighted_text_preserves_raw_markdown_structure(monkeypatch):
     assert len(chapters) == 2
     assert chapters[0][0] == "First Section"
     assert chapters[1][0] == "Second Section"
+
+
+def test_truncate_for_audio_summary_preserves_full_content_and_chapters():
+    """Verify that 1400-3500 word responses are NOT truncated to 100-word snippets and preserve full chapter structure."""
+    from desktop.audio.read_aloud import truncate_for_audio_summary
+    from desktop.audio.tts import extract_chapters_from_text
+
+    # Construct a 1,600-word multi-chapter response (similar to a full technical summary)
+    sec1 = "## 1. Executive Summary\n" + ("This is an important introductory finding about the system architecture. " * 40)
+    sec2 = "\n\n## 2. Deep Dive Analysis\n" + ("Here we examine the empirical benchmark metrics and latency distributions across runs. " * 55)
+    sec3 = "\n\n## 3. Final Recommendations\n" + ("We recommend deploying the updated streaming pipeline and strict wake-word confirmation gate. " * 40)
+    full_response = sec1 + sec2 + sec3
+
+    word_count = len(full_response.split())
+    assert word_count > 1400
+
+    # Must preserve 100% of a 1,600-word summary without dropping sentences or headings
+    result = truncate_for_audio_summary(full_response)
+    assert result == full_response
+    assert len(result.split()) == word_count
+
+    chapters = extract_chapters_from_text(result)
+    assert len(chapters) == 3
+    assert "Executive Summary" in chapters[0][0]
+    assert "Deep Dive Analysis" in chapters[1][0]
+    assert "Final Recommendations" in chapters[2][0]
+
+
+def test_streaming_subchunk_synthesis_prevents_chapter_starvation(monkeypatch):
+    """
+    Verify that when Chapter 1 is short and Chapter 2 is very long (>200 words),
+    speak_async splits chapters into ~45-word streaming sub-chunks and appends them
+    with new_chapter=False for intra-chapter sub-chunks so Chapter 1 never starves waiting for Chapter 2.
+    """
+    import asyncio
+    import numpy as np
+    from desktop.audio.player import SpeechPlayer
+    import desktop.audio.tts as tts_module
+
+    ch1 = "## Short Intro\nWelcome to the brief overview."
+    ch2_sentences = ["Sentence number {} explains the detailed technical benchmark results clearly.".format(i) for i in range(1, 25)]
+    ch2 = "## Long Analysis\n" + " ".join(ch2_sentences)
+    full_text = f"{ch1}\n\n{ch2}"
+
+    sub_chunks_ch2 = tts_module.split_text_for_streaming(ch2, max_words_per_chunk=45)
+    assert len(sub_chunks_ch2) >= 4, "Long chapter must be split into multiple streaming sub-chunks"
+
+    player = SpeechPlayer(samplerate=48000)
+    append_calls = []
+    orig_append = player.append_pcm
+
+    def spy_append(pcm_chunk, chapter_title="", pause_sec=0.25, new_chapter=True):
+        append_calls.append((chapter_title, pause_sec, new_chapter, len(pcm_chunk)))
+        return orig_append(pcm_chunk, chapter_title=chapter_title, pause_sec=pause_sec, new_chapter=new_chapter)
+
+    monkeypatch.setattr(player, "append_pcm", spy_append)
+    monkeypatch.setattr(player, "wait", lambda: None)
+
+    class DummyKokoro:
+        def get_voices(self):
+            return ["af_heart"]
+
+    monkeypatch.setattr(tts_module, "get_kokoro", lambda: DummyKokoro())
+    monkeypatch.setattr(tts_module, "synth_kokoro_pcm", lambda t, voice=None, speed=1.0: np.ones((12000, 2), dtype=np.float32) * 0.2)
+    monkeypatch.setattr(tts_module, "global_player", player)
+
+    asyncio.run(tts_module.speak_async(full_text))
+
+    # Exactly 2 chapters in total should be registered in player markers, despite multiple streaming sub-chunks!
+    assert len(player.chapter_markers) == 2
+    assert player.chapter_titles == ["Short Intro", "Long Analysis"]
+    # First append of Chapter 2 must have new_chapter=True, subsequent sub-chunks of Chapter 2 must have new_chapter=False
+    assert append_calls[0][2] is True
+    assert any(c[2] is False for c in append_calls[1:])
+    player.stop()
+
+
+def test_wakeword_sensitivity_strict_defaults_and_menu():
+    """Verify wakeword_threshold defaults to 0.85 with 2-frame patience and can be configured via set_wakeword_sensitivity."""
+    import desktop.app as app_module
+
+    class DummyApp:
+        def __init__(self):
+            self.wakeword_threshold = 0.85
+            self.wakeword_patience = 2
+            self.wakeword_min_rms = 0.008
+            self.hud_enabled = False
+            self.model = type("DummyModel", (), {"reset": lambda self: None})()
+
+    app = DummyApp()
+    app_module.AntiTrayApp.set_wakeword_sensitivity(app, 0.92, 2, "Ultra-Strict")
+    assert app.wakeword_threshold == 0.92
+    assert app.wakeword_patience == 2
+
+    app_module.AntiTrayApp.set_wakeword_sensitivity(app, 0.85, 2, "Strict")
+    assert app.wakeword_threshold == 0.85
+    assert app.wakeword_patience == 2
+
+
+def test_pause_hold_window_preserves_recent_pause_and_advances_after_expiry(monkeypatch):
+    """
+    Verify Pause Hold Awareness (default 2 minutes / 120s):
+    1. If speech was paused < 120s ago when a new response arrives, it does NOT interrupt or call stop_speech();
+       the new response is queued cleanly behind the paused audio.
+    2. If speech is still paused when the 120s window expires, _check_pause_hold_expiry() automatically advances.
+    3. If speech has already been paused >= 120s when a new response arrives, _on_assistant_response advances immediately.
+    """
+    import collections
+    import threading
+    import time as time_mod
+    import desktop.app as app_module
+
+    class DummyApp:
+        def __init__(self):
+            self.last_spoken_summary = ""
+            self.auto_read = True
+            self.output_history = []
+            self.history_cursor = -1
+            self.speech_queue = collections.deque()
+            self._speak_lock = threading.Lock()
+            self._speech_worker_event = threading.Event()
+            self.hud_enabled = True
+            self.hud_collapsed = False
+            self.hud_statuses = []
+            self.hud = type("DummyHud", (), {
+                "set_status": lambda s, st, state="": self.hud_statuses.append((st, state)),
+                "show": lambda s, state="", status="": self.hud_statuses.append((status, state)),
+            })()
+            self.current_speech_item = None
+            self.pause_hold_seconds = 120.0
+            self.paused_at = None
+            self._capturing_voice_command = False
+            self.is_reading_highlight = False
+            self.muted_sessions = {}
+            self.known_sessions = {}
+
+        def _format_status_with_chat(self, action: str, extra: str = "") -> str:
+            return app_module.AntiTrayApp._format_status_with_chat(self, action, extra)
+
+        def is_session_muted(self, **kwargs) -> bool:
+            return app_module.AntiTrayApp.is_session_muted(self, **kwargs)
+
+    app = DummyApp()
+    stopped_calls = []
+    monkeypatch.setattr(app_module, "is_paused", lambda: True)
+    monkeypatch.setattr(app_module, "stop_speech", lambda: stopped_calls.append(True))
+    monkeypatch.setattr(app_module, "is_speaking", lambda: False)
+
+    # Case 1: User paused only 15 seconds ago (< 120s default grace window)
+    app.paused_at = time_mod.time() - 15.0
+    app_module.AntiTrayApp._on_assistant_response(
+        app, "Response arriving while recently paused", filepath=r"C:\Users\u\.gemini\antigravity\brain\uuid-1\transcript.jsonl", step_index=2
+    )
+    assert len(stopped_calls) == 0, "Should NOT stop paused speech when paused for only 15s (< 120s hold window)"
+    assert len(app.speech_queue) == 1
+
+    # Background timer check at 45s (< 120s) should still hold
+    app.paused_at = time_mod.time() - 45.0
+    assert app_module.AntiTrayApp._check_pause_hold_expiry(app) is False
+    assert len(stopped_calls) == 0
+
+    # Case 2: Background timer reaches 121s (>= 120s) while item is waiting in queue -> auto-advances!
+    app.paused_at = time_mod.time() - 121.0
+    assert app_module.AntiTrayApp._check_pause_hold_expiry(app) is True
+    assert len(stopped_calls) == 1
+    assert app.paused_at is None
+
+    # Case 3: New response arrives when already paused for 130s (>= 120s) -> immediate advance
+    app.paused_at = time_mod.time() - 130.0
+    app_module.AntiTrayApp._on_assistant_response(
+        app, "Response arriving after 130s pause", filepath=r"C:\Users\u\.gemini\antigravity\brain\uuid-1\transcript.jsonl", step_index=3
+    )
+    assert len(stopped_calls) == 2, "Should immediately stop paused speech when paused >= 120s"
+
+
+def test_per_session_mute_durations_queue_purge_and_isolation(monkeypatch):
+    """
+    Verify Per-Session Muting (5m, 10m, 25m, Unmute):
+    - Muting a noisy benchmark session suppresses future responses from that session.
+    - Purges any already-queued responses from that session and skips current speech if that session is speaking.
+    - Allows responses from OTHER unmuted sessions to play normally!
+    - Automatically unmutes once the timer expires or when unmute_all_sessions is called.
+    """
+    import collections
+    import threading
+    import time as time_mod
+    import desktop.app as app_module
+    from desktop.app import SpeechQueueItem, match_playback_intent
+
+    # 1. Verify voice intents for 5, 10, 25 minute session mute & unmute
+    assert match_playback_intent("mute this session", speech_active=True) == "MUTE_SESSION_10"
+    assert match_playback_intent("mute session for 5 minutes", speech_active=True) == "MUTE_SESSION_5"
+    assert match_playback_intent("mute this for five minutes", speech_active=False) == "MUTE_SESSION_5"
+    assert match_playback_intent("mute session for 10 minutes", speech_active=True) == "MUTE_SESSION_10"
+    assert match_playback_intent("mute session for 25 minutes", speech_active=True) == "MUTE_SESSION_25"
+    assert match_playback_intent("mute for twenty-five minutes", speech_active=False) == "MUTE_SESSION_25"
+    assert match_playback_intent("unmute session", speech_active=False) == "UNMUTE_SESSIONS"
+    assert match_playback_intent("unmute all sessions", speech_active=True) == "UNMUTE_SESSIONS"
+
+    monkeypatch.setattr(SpeechQueueItem, "_extract_chat_tag", lambda self, fp: "Benchmark Chat" if (fp and "bench-uuid" in fp) else ("Main Feature" if (fp and "main-uuid" in fp) else "General"))
+
+    class DummyApp:
+        def __init__(self):
+            self.last_spoken_summary = ""
+            self.auto_read = True
+            self.output_history = []
+            self.history_cursor = -1
+            self.speech_queue = collections.deque()
+            self._speak_lock = threading.Lock()
+            self._speech_worker_event = threading.Event()
+            self.hud_enabled = False
+            self.hud_collapsed = False
+            self.current_speech_item = None
+            self.pause_hold_seconds = 120.0
+            self.paused_at = None
+            self.muted_sessions = {}
+            self.known_sessions = {}
+            self.skipped_count = 0
+
+        def _resolve_target_session(self, session_key=None, chat_tag=None):
+            return app_module.AntiTrayApp._resolve_target_session(self, session_key=session_key, chat_tag=chat_tag)
+
+        def is_session_muted(self, **kwargs):
+            return app_module.AntiTrayApp.is_session_muted(self, **kwargs)
+
+        def get_active_muted_sessions(self):
+            return app_module.AntiTrayApp.get_active_muted_sessions(self)
+
+        def skip_current_output(self):
+            self.skipped_count += 1
+
+    app = DummyApp()
+    monkeypatch.setattr(app_module, "is_paused", lambda: False)
+    monkeypatch.setattr(app_module, "is_speaking", lambda: True)
+    monkeypatch.setattr(app_module, "is_speech_active", lambda: True)
+
+    bench_fp = r"C:\Users\u\.gemini\antigravity\brain\bench-uuid-123\.system_generated\logs\transcript.jsonl"
+    main_fp = r"C:\Users\u\.gemini\antigravity\brain\main-uuid-456\.system_generated\logs\transcript.jsonl"
+
+    # Queue 2 benchmark outputs and 1 main feature output, with benchmark currently playing
+    app_module.AntiTrayApp._on_assistant_response(app, "Benchmark iteration 1", filepath=bench_fp, step_index=1)
+    app_module.AntiTrayApp._on_assistant_response(app, "Benchmark iteration 2", filepath=bench_fp, step_index=2)
+    app_module.AntiTrayApp._on_assistant_response(app, "Important main session answer", filepath=main_fp, step_index=1)
+    assert len(app.speech_queue) == 3
+
+    app.current_speech_item = app.speech_queue.popleft()  # Benchmark iteration 1 is now playing
+
+    # User mutes the active session (Benchmark Chat) for 10 minutes
+    app_module.AntiTrayApp.mute_session(app, duration_minutes=10.0)
+
+    # Must have skipped currently playing Benchmark iteration 1 AND purged Benchmark iteration 2 from the queue!
+    assert app.skipped_count == 1
+    assert len(app.speech_queue) == 1
+    assert app.speech_queue[0].text == "Important main session answer"
+    assert app.is_session_muted(filepath=bench_fp) is True
+    assert app.is_session_muted(filepath=main_fp) is False
+
+    # Subsequent benchmark iterations arrive -> completely ignored!
+    app_module.AntiTrayApp._on_assistant_response(app, "Benchmark iteration 3", filepath=bench_fp, step_index=3)
+    assert len(app.speech_queue) == 1
+
+    # Another response from Main Feature session arrives -> queued normally!
+    app_module.AntiTrayApp._on_assistant_response(app, "Second main session answer", filepath=main_fp, step_index=2)
+    assert len(app.speech_queue) == 2
+
+    # Simulate timer expiry -> session automatically unmutes
+    app.muted_sessions["bench-uuid-123"]["until"] = time_mod.time() - 1.0
+    assert app.is_session_muted(filepath=bench_fp) is False
+    app_module.AntiTrayApp._on_assistant_response(app, "Benchmark final summary after mute expired", filepath=bench_fp, step_index=4)
+    assert len(app.speech_queue) == 3
+
+
+def test_extract_visible_blocks_preserves_verbatim_chat_tokens():
+    """Verify visible block extraction keeps Ctrl+F verbatim tokens and splits around hidden blocks."""
+    from desktop.audio.read_aloud import extract_visible_blocks_from_markdown
+
+    md = (
+        "## Overview\n"
+        "**Anti** uses `split_text_for_streaming()` inside [tts.py](file:///h:/repo/desktop/audio/tts.py#L10-L20) "
+        "for \\$100 savings.\n\n"
+        "```python\nx = 1 + 2\n```\n\n"
+        "Then visit https://example.com/docs or compute $x + y$ before continuing."
+    )
+
+    blocks = extract_visible_blocks_from_markdown(md)
+    joined = "\n".join(blocks)
+
+    assert "Anti" in joined
+    assert "Ante" not in joined
+    assert "split_text_for_streaming()" in joined
+    assert "$100" in joined
+    assert "tts.py" in joined
+    assert "https://example.com/docs" not in joined
+    assert "x = 1 + 2" not in joined
+    assert "x + y" not in joined
+
+    # Words across code blocks and URLs must stay in distinct blocks
+    assert any("Anti uses split_text_for_streaming() inside tts.py for $100 savings." == b for b in blocks)
+    assert any("Then visit" == b for b in blocks)
+    assert any("or compute" == b for b in blocks)
+    assert any("before continuing." == b for b in blocks)
+
+
+def test_speech_player_sample_accurate_phrase_locator_and_seek_sync():
+    """Verify SpeechPlayer tracks sample-accurate verbatim Ctrl+F phrases across chapters and seeks."""
+    import numpy as np
+    from desktop.audio.player import SpeechPlayer
+    from desktop.audio.read_aloud import align_subchunks_to_visible_blocks
+
+    sr = 48000
+    player = SpeechPlayer(samplerate=sr)
+
+    ch1_md = "## Setup\nFirst install the local audio dependencies and verify your microphone input."
+    ch2_md = "## Execution\nNext launch the background daemon and watch incoming conversation turns."
+
+    ch1_blocks = ["Setup", "First install the local audio dependencies and verify your microphone input."]
+    ch2_blocks = ["Execution", "Next launch the background daemon and watch incoming conversation turns."]
+
+    ch1_aligned = align_subchunks_to_visible_blocks(
+        ["First install the local audio dependencies and verify your microphone input."],
+        ch1_blocks,
+    )
+    ch2_aligned = align_subchunks_to_visible_blocks(
+        ["Next launch the background daemon and watch incoming conversation turns."],
+        ch2_blocks,
+    )
+
+    pcm1 = np.ones((5 * sr, 2), dtype=np.float32) * 0.2
+    pcm2 = np.ones((5 * sr, 2), dtype=np.float32) * 0.2
+
+    player.play_pcm(pcm1, chapter_markers=[0], chapter_titles=["Setup", "Execution"], stream_complete=False)
+    player._is_playing = True
+    player._is_paused = False
+    player.register_segment_tokens(ch1_aligned[0], start_sample=0, end_sample=len(pcm1), chapter_title="Setup")
+
+    player.append_pcm(pcm2, chapter_title="Execution", pause_sec=0.25, new_chapter=True)
+    player.register_segment_tokens(ch2_aligned[0], chapter_title="Execution")
+    player.set_stream_complete(True)
+
+    # Start of Chapter 1: skips 1-word heading "Setup" and picks prose substring
+    loc_start = player.get_locator_at_sample(sample_idx=0, target_words=6)
+    assert loc_start is not None
+    assert loc_start["chapter"] == 1
+    assert loc_start["total_chapters"] == 2
+    assert loc_start["phrase"] in ch1_blocks[1]
+    assert 4 <= len(loc_start["phrase"].split()) <= 6
+
+    # Middle of Chapter 1
+    loc_mid = player.get_locator_at_sample(sample_idx=int(2.5 * sr), target_words=6)
+    assert loc_mid is not None
+    assert loc_mid["phrase"] in ch1_blocks[1]
+
+    # Fast-forward into Chapter 2
+    player.fast_forward(6.0)
+    loc_ch2 = player.get_locator_at_sample(target_words=6)
+    assert loc_ch2 is not None
+    assert loc_ch2["chapter"] == 2
+    assert loc_ch2["chapter_title"] == "Execution"
+    assert loc_ch2["phrase"] in ch2_blocks[1]
+    assert loc_ch2["progress_pct"] >= 50
+
+    # Rewind 5.0s back into Chapter 1
+    player.rewind(5.0)
+    loc_rew = player.get_locator_at_sample(target_words=6)
+    assert loc_rew is not None
+    assert loc_rew["chapter"] == 1
+    assert loc_rew["phrase"] in ch1_blocks[1]
+
+    player.stop()
+
+
+def test_hud_locate_button_hit_test_hover_progress_and_transport_non_regression():
+    """Verify HUD Locate [⌖] button hit-testing, hover hints, progress clamping, and existing button safety."""
+    from desktop.ui.hud import WaveformHud
+
+    hud = WaveformHud(position="bottom_right")
+
+    # Expanded mode (height = 84)
+    hud.height = 84
+    assert hud._hit_test_locate(430, 25) is True
+    assert hud._hit_test_collapse(455, 25) is True
+    assert hud._hit_test_locate(50, 20) is False
+    assert hud._hit_test_collapse(50, 20) is False
+
+    # Compact mode (height = 38)
+    hud.height = 38
+    assert hud._hit_test_locate(430, 18) is True
+    assert hud._hit_test_collapse(455, 18) is True
+    assert hud._hit_test_locate(50, 20) is False
+
+    class DummyEvent:
+        def __init__(self, x, y):
+            self.x = x
+            self.y = y
+
+    # Click Locate button
+    hud.height = 84
+    located = []
+    hud.on_locate = lambda: located.append(True)
+    assert hud._on_canvas_click(DummyEvent(430, 25)) == "break"
+    assert located == [True]
+
+    # Hover Locate button
+    hud._on_mouse_move(DummyEvent(430, 25))
+    assert hud.hovered_button == "locate"
+    assert hud._hover_hint == "🎯  FIND PHRASE IN CHAT (Ctrl+Alt+F)"
+
+    # Progress clamping
+    hud.set_progress(1.5)
+    assert hud.playback_progress == 1.0
+    hud.set_progress(-0.2)
+    assert hud.playback_progress == 0.0
+    hud.set_progress(0.42)
+    assert abs(hud.playback_progress - 0.42) < 1e-6
+
+
+def test_locate_in_chat_copies_verbatim_phrase_and_voice_intent(monkeypatch):
+    """Verify LOCATE_IN_CHAT voice intent, clipboard copy, HUD toast, and output_history fallback."""
+    import desktop.app as app_module
+    from desktop.app import SpeechQueueItem, match_playback_intent
+
+    assert match_playback_intent("find in chat", True) == "LOCATE_IN_CHAT"
+    assert match_playback_intent("where are you reading", True) == "LOCATE_IN_CHAT"
+    assert match_playback_intent("find in chat", False) is None
+    assert match_playback_intent("find the bug in chat.py", True) is None
+
+    copied = []
+    monkeypatch.setattr(app_module, "set_clipboard_text", lambda txt: copied.append(txt))
+    monkeypatch.setattr(app_module, "play_seek_chime", lambda forward=True: None)
+
+    class DummyHud:
+        def __init__(self):
+            self.toasts = []
+            self.shown = []
+        def flash_action(self, toast, duration_sec=1.4):
+            self.toasts.append(toast)
+        def show(self, state="idle", status="", subtitle=""):
+            self.shown.append((state, status))
+
+    class DummyApp:
+        def __init__(self):
+            self.hud_enabled = True
+            self.hud_collapsed = False
+            self.hud = DummyHud()
+            self.current_speech_item = None
+            self.output_history = [SpeechQueueItem("First turn text")]
+            self.history_cursor = 0
+            self.last_spoken_summary = ""
+            self.speech_queue = []
+
+        def _hide_hud_after_delay(self, delay=1.0):
+            pass
+
+    app = DummyApp()
+
+    # 1. Active playback locator hit
+    monkeypatch.setattr(app_module, "is_speech_active", lambda: True)
+    monkeypatch.setattr(
+        app_module,
+        "get_current_locator_info",
+        lambda target_words=6: {
+            "phrase": "verify your microphone input",
+            "active_word": "microphone",
+            "chapter": 2,
+            "total_chapters": 4,
+            "chapter_title": "Setup",
+            "progress_pct": 42,
+            "position_seconds": 12.5,
+        },
+    )
+    res_active = app_module.AntiTrayApp.locate_in_chat(app)
+    assert res_active == "verify your microphone input"
+    assert copied[-1] == "verify your microphone input"
+    assert len(app.hud.toasts) == 1
+    assert "Ch 2/4 42%" in app.hud.toasts[0]
+
+    # 2. Fallback to output_history when playback just ended
+    monkeypatch.setattr(app_module, "is_speech_active", lambda: False)
+    app.output_history = [SpeechQueueItem("## Summary\nAll unit tests passed without any regression today.")]
+    app.history_cursor = 0
+    res_fb = app_module.AntiTrayApp.locate_in_chat(app)
+    assert res_fb == "All unit tests passed without any"
+    assert copied[-1] == "All unit tests passed without any"
+
+
+def test_filter_verification_report_skips_verification_keeps_summary_and_closing():
+    """Verify Verification Report headings/bold headers are skipped while summary and trailing questions are kept."""
+    from desktop.audio.read_aloud import filter_verification_report_for_speech
+
+    sample = (
+        "### Summary of Changes\n"
+        "- Updated [`desktop/app.py`](file:///repo/desktop/app.py) to add section filtering.\n"
+        "- Updated [`desktop/audio/read_aloud.py`](file:///repo/desktop/audio/read_aloud.py) with Markdown parser.\n\n"
+        "### Verification Results\n"
+        "- `pytest desktop/tests/ tests/ -q`: **80 passed** in 4.1s.\n"
+        "```bash\n"
+        "$ pytest relay/test_relay.py -q\n"
+        "7 passed in 0.9s\n"
+        "```\n"
+        "All changes are uncommitted in your working tree; would you like me to commit them now?"
+    )
+    filtered = filter_verification_report_for_speech(sample)
+    assert "Summary of Changes" in filtered
+    assert "desktop/app.py" in filtered
+    assert "Verification Results" not in filtered
+    assert "pytest" not in filtered
+    assert "7 passed" not in filtered
+    assert "would you like me to commit them now?" in filtered
+    # Must be idempotent
+    assert filter_verification_report_for_speech(filtered) == filtered
+
+    variants = [
+        "### Verification Report\n- All checks green.\n\nReady for your next command?",
+        "### 3. `sdcs check` Final Verification Receipt\n- `sdcs verify --topology`: exit 0.\n\nLet me know if you want to push.",
+        "### Observed Verification Results (Post-Final Edit)\n- 85/85 passing.\n\nShall I open a pull request?",
+        "## Implementation\nAdded helper function.\n\n**Offline & Anti-Bias Verification (Ran After Final Edits):**\n- Fixture replay passed.\n\nNext step: try it live?",
+        "## Implementation\nAdded helper function.\n\n5. **Independent Full-Suite and Gate Verification**:\n  - Desktop suite passed.\n  - Relay suite passed.\n\n## Next Steps\nTest voice playback.",
+    ]
+    for v in variants:
+        out = filter_verification_report_for_speech(v)
+        assert "All checks green" not in out
+        assert "sdcs verify --topology" not in out
+        assert "85/85 passing" not in out
+        assert "Fixture replay passed" not in out
+        assert "Desktop suite passed" not in out
+        assert out != ""
+        assert (
+            "Ready for your next command?" in out
+            or "Let me know if you want to push." in out
+            or "Shall I open a pull request?" in out
+            or "Next step: try it live?" in out
+            or "Test voice playback." in out
+        )
+
+
+def test_filter_verification_report_preserves_closeout_sections_and_nested_closeout_bullets():
+    """Verify standalone Close-Out sections AND nested Close-Out bullets inside Verification sections are preserved."""
+    from desktop.audio.read_aloud import filter_verification_report_for_speech
+    from desktop.audio.tts import extract_chapters_from_text
+
+    # Case A: Separate Verification Results followed by SDCS Close-Out
+    case_a = (
+        "## Changes\n"
+        "Refactored playback queue.\n\n"
+        "## Verification Results\n"
+        "- `pytest`: 85/85 passed\n"
+        "- `sdcs verify --mocks`: exit 0\n\n"
+        "## SDCS Close-Out\n"
+        "- Pruned `state.md` under 300 tokens.\n"
+        "- Logged session flight recorder."
+    )
+    out_a = filter_verification_report_for_speech(case_a)
+    assert "Refactored playback queue." in out_a
+    assert "Verification Results" not in out_a
+    assert "85/85 passed" not in out_a
+    assert "## SDCS Close-Out" in out_a
+    assert "Pruned `state.md` under 300 tokens." in out_a
+    assert "Logged session flight recorder." in out_a
+
+    # Case B: Combined Verification & Close-Out with nested Close-Out bullet block
+    case_b = (
+        "## What Changed\n"
+        "Added skip filter toggle.\n\n"
+        "### Verification & Close-Out\n"
+        "- `pytest desktop/tests/ -q`: 75 passed\n"
+        "- `sdcs check`: 0 errors\n"
+        "- **SDCS Close-Out Gates:**\n"
+        "  - Updated `roadmap.md` with M-006.\n"
+        "  - Synced `app_map.md` and `state.md`.\n\n"
+        "Everything is live. Would you like to test it?"
+    )
+    out_b = filter_verification_report_for_speech(case_b)
+    assert "Added skip filter toggle." in out_b
+    assert "75 passed" not in out_b
+    assert "0 errors" not in out_b
+    assert "SDCS Close-Out Gates:" in out_b
+    assert "Updated `roadmap.md` with M-006." in out_b
+    assert "Synced `app_map.md` and `state.md`." in out_b
+    assert "Would you like to test it?" in out_b
+
+    chapters = extract_chapters_from_text(out_b)
+    titles = [c[0] for c in chapters]
+    assert any("Close-Out Gates" in t for t in titles), f"Expected Close-Out chapter in {titles}"
+
+    # Case C: Inline body on Close-Out bullet should not be lost in chapter extraction
+    case_c = (
+        "## Overview\nBody paragraph here.\n\n"
+        "## Verification Results\n"
+        "- `pytest`: 10 passed\n"
+        "- **SDCS Close-Out:** All 6 pillars synced cleanly.\n"
+    )
+    out_c = filter_verification_report_for_speech(case_c)
+    assert "All 6 pillars synced cleanly." in out_c
+    ch_c = extract_chapters_from_text(out_c)
+    assert any("All 6 pillars synced cleanly." in body for _, body in ch_c)
+
+
+def test_filter_verification_report_never_skips_narrative_or_plan_headings_or_fenced_blocks():
+    """Verify narrative 'Verified' headings, design plans, code blocks, orphaned truncated fences, and full-verdict fallback."""
+    from desktop.audio.read_aloud import filter_verification_report_for_speech
+
+    narrative = (
+        "### What Was Built & Verified\n"
+        "We built the complete audio pipeline.\n\n"
+        "### 2. Zero Leaks Verified Across All Public Surfaces\n"
+        "Scanned every tracked file cleanly.\n\n"
+        "### The Verification Mirage & The Fatal Self-Revert\n"
+        "Root cause narrative stays intact.\n\n"
+        "#### Component 3: Topology & Verification (Gate T)\n"
+        "Architecture explanation stays intact.\n\n"
+        "### Verification Plan (M-006)\n"
+        "Future test plan stays intact.\n\n"
+        "#### **Tweet 3 (The Links + Verification Receipt)**\n"
+        "Social draft stays intact.\n\n"
+        "1. **Account Verification Status is 100% Clear:**\n"
+        "User account note stays intact.\n\n"
+        "```markdown\n"
+        "### Verification Results\n"
+        "- Example inside fenced code block must remain intact.\n"
+        "```"
+    )
+    out_nar = filter_verification_report_for_speech(narrative)
+    assert out_nar.strip() == narrative.strip()
+
+    # Orphaned closing fence from <truncated N bytes> must NOT mask subsequent Verification Summary
+    truncated = (
+        "### Summary\n"
+        "Implemented feature X cleanly.\n\n"
+        "```python\n"
+        "<truncated 992 bytes>\n"
+        "     ```\n\n"
+        "### Verification Summary\n"
+        "- `pytest`: 85/85 passed\n\n"
+        "Let me know if you want to run anything else."
+    )
+    out_trunc = filter_verification_report_for_speech(truncated)
+    assert "Implemented feature X cleanly." in out_trunc
+    assert "85/85 passed" not in out_trunc
+    assert "Let me know if you want to run anything else." in out_trunc
+
+    # Standalone 100%-verification response falls back safely instead of returning empty string
+    only_verif = "### Verification\n- 85/85 passed"
+    assert filter_verification_report_for_speech(only_verif) == only_verif
+
+
+def test_filter_verification_report_preserves_verbatim_locate_in_chat_alignment():
+    """Verify every visible token after filtering + Close-Out promotion remains verbatim for Locate-in-Chat."""
+    from desktop.audio.read_aloud import (
+        align_subchunks_to_visible_blocks,
+        extract_visible_blocks_from_markdown,
+        filter_verification_report_for_speech,
+    )
+
+    raw_md = (
+        "## Summary of Changes\n"
+        "Added deterministic section filtering so verification logs do not interrupt spoken summaries.\n\n"
+        "## Verification & Close-Out\n"
+        "- `pytest desktop/tests/ -q`: 80 passed\n"
+        "- **SDCS Close-Out:**\n"
+        "  - Updated roadmap and active blackboard state cleanly.\n\n"
+        "Would you like me to commit these verified updates now?"
+    )
+    filtered = filter_verification_report_for_speech(raw_md)
+
+    orig_blocks = extract_visible_blocks_from_markdown(raw_md)
+    filt_blocks = extract_visible_blocks_from_markdown(filtered)
+    orig_joined = " ".join(orig_blocks)
+
+    aligned = align_subchunks_to_visible_blocks(
+        [
+            "Added deterministic section filtering so verification logs do not interrupt spoken summaries.",
+            "Updated roadmap and active blackboard state cleanly.",
+            "Would you like me to commit these verified updates now?",
+        ],
+        filt_blocks,
+    )
+    for chunk_tokens in aligned:
+        assert len(chunk_tokens) > 0
+        phrase = " ".join(w for _, w in chunk_tokens)
+        # Check sliding 5-word windows appear verbatim in original DOM visible text
+        words = phrase.split()
+        if len(words) >= 5:
+            snippet = " ".join(words[:5])
+            assert snippet in orig_joined, f"Located snippet '{snippet}' missing from original DOM text"
+
+
+def test_tray_app_skip_verification_toggle_and_remote_ack_unfiltered(monkeypatch):
+    """Verify AntiTrayApp filters speech by default, sends unfiltered remote ACK, and respects Settings toggle."""
+    import collections
+    import threading
+    import pystray
+    import desktop.app as app_module
+
+    class DummyHud:
+        def __init__(self):
+            self.theme = "cyberpunk"
+            self.position = "bottom_right"
+            self.toasts = []
+            self.shown = []
+        def flash_action(self, toast, duration_sec=1.6):
+            self.toasts.append(toast)
+        def show(self, state="listening", status="", subtitle=""):
+            self.shown.append((state, status))
+        def set_status(self, st, state=""):
+            self.shown.append((state, st))
+        def hide(self):
+            pass
+
+    class DummyToggleApp:
+        def __init__(self):
+            self.auto_submit = True
+            self.auto_read = True
+            self.skip_verification_report = True
+            self.muted = False
+            self.speech_speed = 1.0
+            self.hud_enabled = True
+            self.hud_collapsed = False
+            self.remote_poll_enabled = False
+            self.speech_queue = collections.deque()
+            self.output_history = []
+            self.history_cursor = -1
+            self.last_raw_response = ""
+            self.last_spoken_summary = ""
+            self.current_speech_item = None
+            self.running = True
+            self.hud = DummyHud()
+            self._speak_lock = threading.Lock()
+            self._speech_worker_event = threading.Event()
+            self.pending_remote_dispatch = {
+                "id": "disp-1",
+                "submitted": True,
+                "matched_transcript": None,
+                "matched_step_index": 0,
+            }
+            self.acks = []
+            self.known_sessions = {}
+
+        def _get_tray_header_text(self, item=None):
+            return "🟢 AudioMind"
+        def send_remote_ack(self, dispatch_id, status="EXECUTED", summary=None):
+            self.acks.append((dispatch_id, status, summary))
+        def show_status_toast(self, *a, **k): pass
+        def toggle_auto_submit(self, *a, **k): pass
+        def toggle_auto_read(self, *a, **k): pass
+        def toggle_speech_pause(self, *a, **k): pass
+        def forward_speech_5(self, *a, **k): pass
+        def rewind_speech_5(self, *a, **k): pass
+        def skip_next_chapter(self, *a, **k): pass
+        def skip_current_output(self, *a, **k): pass
+        def repeat_curr_chapter(self, *a, **k): pass
+        def repeat_chapter(self, *a, **k): pass
+        def repeat_current_output(self, *a, **k): pass
+        def go_back_output(self, *a, **k): pass
+        def interrupt_speech(self, *a, **k): pass
+        def replay_last_response(self, *a, **k): pass
+        def read_highlighted_text(self, *a, **k): pass
+        def set_voice_model(self, *a, **k): pass
+        def set_hud_theme(self, *a, **k): pass
+        def set_speech_speed(self, *a, **k): pass
+        def toggle_mute(self, *a, **k): pass
+        def toggle_hud(self, *a, **k): pass
+        def toggle_hud_dock(self, *a, **k): pass
+        def toggle_remote_listener(self, *a, **k): pass
+        def test_greeting(self, *a, **k): pass
+        def open_firewall_audit(self, *a, **k): pass
+        def exit_app(self, *a, **k): pass
+        def _hide_hud_after_delay(self, delay=1.0): pass
+        def toggle_skip_verification_report(self, _icon=None, _item=None):
+            return app_module.AntiTrayApp.toggle_skip_verification_report(self, _icon, _item)
+
+    monkeypatch.setattr(app_module, "is_speech_active", lambda: False)
+    monkeypatch.setattr(app_module, "is_paused", lambda: False)
+    monkeypatch.setattr(app_module, "is_speaking", lambda: False)
+
+    app = DummyToggleApp()
+    raw_reply = (
+        "### Overview\nFeature implemented cleanly.\n\n"
+        "### Verification Results\n- `pytest`: 85/85 passed\n\n"
+        "Ready to test?"
+    )
+
+    # 1. Default skip_verification_report=True filters speech queue while sending full ACK
+    app_module.AntiTrayApp._on_assistant_response(app, raw_reply, filepath="chat.jsonl", step_index=10)
+    assert len(app.speech_queue) == 1
+    queued_text = app.speech_queue[0].text
+    assert "Feature implemented cleanly." in queued_text
+    assert "85/85 passed" not in queued_text
+    assert "Ready to test?" in queued_text
+    assert len(app.acks) == 1
+    assert "85/85 passed" in app.acks[0][2]
+
+    # 2. Toggling OFF restores full unfiltered read-aloud
+    app.toggle_skip_verification_report()
+    assert app.skip_verification_report is False
+    assert any("OFF" in t for t in app.hud.toasts)
+    app_module.AntiTrayApp._on_assistant_response(app, raw_reply, filepath="chat.jsonl", step_index=11)
+    assert "85/85 passed" in app.speech_queue[-1].text
+
+    # 3. Tray Settings submenu exposes the Skip Verification Reports checkbox item
+    app_module.AntiTrayApp._setup_tray(app)
+    get_text = lambda it: it.text(it) if callable(it.text) else str(it.text)
+    settings_item = next(
+        it for it in app.tray_icon.menu.items
+        if it != pystray.Menu.SEPARATOR and "Settings" in get_text(it)
+    )
+    settings_texts = [get_text(sub) for sub in settings_item.submenu.items if sub != pystray.Menu.SEPARATOR]
+    assert any("Skip Verification Reports" in t for t in settings_texts)
+
+
+def test_windows_startup_helpers_and_tray_toggle(monkeypatch):
+    """Verify Windows startup registry helpers and tray Settings toggle without mutating real registry."""
+    import sys
+    import types
+    import pystray
+    import desktop.app as app_module
+
+    fake_store = {}
+
+    class FakeKey:
+        def __init__(self, subkey):
+            self.subkey = subkey
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+
+    fake_winreg = types.SimpleNamespace(
+        HKEY_CURRENT_USER="HKCU",
+        KEY_READ=1,
+        KEY_SET_VALUE=2,
+        REG_SZ=1,
+        OpenKey=lambda root, subkey, _res, _access: FakeKey(subkey),
+        CreateKeyEx=lambda root, subkey, _res, _access: FakeKey(subkey),
+        QueryValueEx=lambda key, name: (
+            fake_store[(key.subkey, name)], 1
+        ) if (key.subkey, name) in fake_store else (_ for _ in ()).throw(FileNotFoundError()),
+        SetValueEx=lambda key, name, _res, _typ, val: fake_store.__setitem__((key.subkey, name), val),
+        DeleteValue=lambda key, name: fake_store.pop((key.subkey, name)) if (key.subkey, name) in fake_store else (_ for _ in ()).throw(FileNotFoundError()),
+    )
+    monkeypatch.setitem(sys.modules, "winreg", fake_winreg)
+
+    cmd = app_module.get_startup_command()
+    assert cmd.startswith('wscript.exe "')
+    assert cmd.endswith('launch_anti_tray.vbs"')
+
+    assert app_module.is_windows_startup_enabled() is False
+    assert app_module.set_windows_startup_enabled(True) is True
+    assert app_module.is_windows_startup_enabled() is True
+    assert fake_store[(app_module.STARTUP_REG_KEY, app_module.STARTUP_APP_NAME)] == cmd
+
+    assert app_module.set_windows_startup_enabled(False) is False
+    assert app_module.is_windows_startup_enabled() is False
+
+    class DummyHud:
+        def __init__(self):
+            self.theme = "cyberpunk"
+            self.position = "bottom_right"
+            self.toasts = []
+        def flash_action(self, toast, duration_sec=1.6):
+            self.toasts.append(toast)
+        def show(self, state="listening", status="", subtitle=""):
+            pass
+
+    class DummyStartupApp:
+        def __init__(self):
+            self.hud_enabled = True
+            self.muted = False
+            self.hud = DummyHud()
+            self.launch_on_startup = False
+            self.auto_submit = True
+            self.auto_read = True
+            self.skip_verification_report = True
+            self.speech_speed = 1.0
+            self.remote_poll_enabled = False
+            self.speech_queue = []
+            self.output_history = []
+            self.last_spoken_summary = ""
+            self.hud_collapsed = False
+        def _get_tray_header_text(self, item=None): return "AudioMind"
+        def show_status_toast(self, *a, **k): pass
+        def toggle_auto_submit(self, *a, **k): pass
+        def toggle_auto_read(self, *a, **k): pass
+        def toggle_speech_pause(self, *a, **k): pass
+        def forward_speech_5(self, *a, **k): pass
+        def rewind_speech_5(self, *a, **k): pass
+        def skip_next_chapter(self, *a, **k): pass
+        def skip_current_output(self, *a, **k): pass
+        def repeat_curr_chapter(self, *a, **k): pass
+        def repeat_chapter(self, *a, **k): pass
+        def repeat_current_output(self, *a, **k): pass
+        def go_back_output(self, *a, **k): pass
+        def interrupt_speech(self, *a, **k): pass
+        def read_highlighted_text(self, *a, **k): pass
+        def set_voice_model(self, *a, **k): pass
+        def set_hud_theme(self, *a, **k): pass
+        def set_speech_speed(self, *a, **k): pass
+        def toggle_mute(self, *a, **k): pass
+        def toggle_hud(self, *a, **k): pass
+        def toggle_hud_dock(self, *a, **k): pass
+        def toggle_remote_listener(self, *a, **k): pass
+        def test_greeting(self, *a, **k): pass
+        def open_firewall_audit(self, *a, **k): pass
+        def exit_app(self, *a, **k): pass
+        def _hide_hud_after_delay(self, delay=1.0): pass
+        def toggle_launch_on_startup(self, _icon=None, _item=None):
+            return app_module.AntiTrayApp.toggle_launch_on_startup(self, _icon, _item)
+
+    monkeypatch.setattr(app_module, "is_speech_active", lambda: False)
+    monkeypatch.setattr(
+        pystray,
+        "Icon",
+        lambda name, icon, title="", menu=None: types.SimpleNamespace(name=name, icon=icon, title=title, menu=menu),
+    )
+    app = DummyStartupApp()
+    app.toggle_launch_on_startup()
+    assert app.launch_on_startup is True
+    assert app_module.is_windows_startup_enabled() is True
+    assert any("Startup Launch: ON" in t for t in app.hud.toasts)
+
+    app_module.AntiTrayApp._setup_tray(app)
+    get_text = lambda it: it.text(it) if callable(it.text) else str(it.text)
+    settings_item = next(
+        it for it in app.tray_icon.menu.items
+        if it != pystray.Menu.SEPARATOR and "Settings" in get_text(it)
+    )
+    settings_texts = [get_text(sub) for sub in settings_item.submenu.items if sub != pystray.Menu.SEPARATOR]
+    assert any("Launch on Windows Startup" in t for t in settings_texts)
+
+
+def test_expanded_winamp_hud_mode_and_live_reader():
+    """Verify WaveformHud expanded Winamp reader mode, hit-testing, and text wrapping."""
+    from desktop.ui.hud import WaveformHud
+
+    hud = WaveformHud()
+    assert hud.expanded is False
+    assert hud.width == 480
+    assert hud.height == 38
+
+    # Toggle into expanded Winamp deck (+25% scale: 800x360)
+    hud.toggle_expand()
+    assert hud.expanded is True
+    assert hud.width == 800
+    assert hud.height == 360
+
+    # Hit-test top-right expand, locate, collapse, and bottom-right speed pill
+    assert hud._hit_test_expand(800 - 148, 25) is True
+    assert hud._hit_test_locate(800 - 116, 25) is True
+    assert hud._hit_test_collapse(800 - 84, 25) is True
+    assert hud._hit_test_speed(650, 310) is True
+    assert hud._hit_test_button(85, 310) == "prev"
+
+    # Update live text & playback metadata
+    hud.set_live_text(
+        phrase="live reader shows context",
+        context_before="This is the beginning of the response so the",
+        context_after="around what AudioMind is currently speaking aloud.",
+        chapter_label="Ch 2/4: Architecture",
+    )
+    hud.set_playback_meta(elapsed_sec=74.0, total_sec=150.0, queue_count=2, speed_label="1.15x")
+    assert hud._format_mmss(74.0) == "1:14"
+    assert hud._format_mmss(150.0) == "2:30"
+
+    wrapped = hud._wrap_reader_segments(
+        hud.live_context_before,
+        hud.live_phrase,
+        hud.live_context_after,
+        max_chars=48,
+        max_lines=3,
+    )
+    assert 1 <= len(wrapped) <= 3
+    active_words = [w for line in wrapped for w, is_act in line if is_act]
+    assert active_words == ["live", "reader", "shows", "context"]
+
+    # Toggle back to compact HUD
+    hud.toggle_expand()
+    assert hud.expanded is False
+    assert hud.width == 480
+    assert hud.height == 38
+
+    # Verify uniform UI scaling across compact pill, compact dock, and expanded deck
+    hud.set_scale(1.25)
+    assert hud.width == 600
+    assert hud.height == 48
+    hud.set_expanded(True)
+    assert hud.width == 1000
+    assert hud.height == 450
+    assert hud._hit_test_speed(650 * 1.25, 310 * 1.25) is True
+    hud.set_scale(0.75)
+    assert hud.width == 600
+    assert hud.height == 270
+    assert hud._hit_test_button(85 * 0.75, 310 * 0.75) == "prev"
+
+
+def test_player_locator_includes_context_and_duration():
+    """Verify get_locator_at_sample returns context_before, context_after, and duration_seconds."""
+    import numpy as np
+    from desktop.audio.player import SpeechPlayer
+
+    player = SpeechPlayer(samplerate=1000)
+    samples = np.zeros((2000, 2), dtype=np.float32)
+    text = (
+        "First sentence gives background context before the target phrase "
+        "and then continues with additional words afterward for reading."
+    )
+    player.audio_data = samples
+    tokens = [(0, w) for w in text.split()]
+    player.register_segment_tokens(tokens, start_sample=0, end_sample=2000, chapter_title="Overview")
+
+    info = player.get_locator_at_sample(sample_idx=1000, target_words=4)
+    assert info is not None
+    assert info["phrase"]
+    assert info["context_before"]
+    assert info["context_after"]
+    assert info["duration_seconds"] == 2.0
+
+
+
+
+
 
 
 

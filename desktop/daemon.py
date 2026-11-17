@@ -57,7 +57,7 @@ AGY_PATH = resolve_agy_path()
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "resources", "models", "hey_anti.onnx")
 
 class VoiceHarnessDaemon:
-    def __init__(self, wakeword_threshold: float = 0.55):
+    def __init__(self, wakeword_threshold: float = 0.85):
         self.wakeword_threshold = wakeword_threshold
         self.firewall = CommandFirewall(workspace_root=os.path.abspath("."))
         self.recognizer = sr.Recognizer()
