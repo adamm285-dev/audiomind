@@ -55,6 +55,10 @@ THEME_PALETTES = {
         "listening": {"glow": "#38bdf8", "bar1": "#7dd3fc", "bar2": "#ffffff", "dot": "#38bdf8"},
         "speaking":  {"glow": "#38bdf8", "bar1": "#ffffff", "bar2": "#38bdf8", "dot": "#38bdf8"},
     },
+    "seiko": {
+        "listening": {"glow": "#f59e0b", "bar1": "#fde68a", "bar2": "#f59e0b", "dot": "#fbbf24"},
+        "speaking":  {"glow": "#fbbf24", "bar1": "#fef3c7", "bar2": "#d97706", "dot": "#f59e0b"},
+    },
 }
 
 def _hex_to_rgb(hex_str: str) -> tuple[int, int, int]:
@@ -80,7 +84,7 @@ def _interpolate_color(c1: str, c2: str, t: float) -> str:
         return c1 if t < 0.5 else c2
 
 class WaveformHud:
-    def __init__(self, position="bottom_right", theme="cyberpunk", width=480):
+    def __init__(self, position="bottom_right", theme="seiko", width=480):
         self.root = None
         self.canvas = None
         self.is_running = False
@@ -1118,9 +1122,10 @@ class WaveformHud:
         self.canvas.create_text(112 * s, 90 * s, text=play_glyph, fill=glyph_color, font=("Segoe UI Symbol", sf(18), "bold"), anchor="w")
 
         time_str = f"{self._format_mmss(elapsed_s)} / {self._format_mmss(total_s)}" if total_s > 0 else self._format_mmss(elapsed_s)
+        seg_on = "#fde68a" if self.theme == "seiko" else "#e0f7ff"
         time_end_x = self._draw_seven_segment_text(
             138 * s, 90 * s, time_str, digit_h=22 * s,
-            on_color="#e0f7ff", off_color="#0e2a5c",
+            on_color=seg_on, off_color="#0e2a5c",
         )
         badge_x = time_end_x + 14 * s
 
@@ -1161,7 +1166,8 @@ class WaveformHud:
                 target_h = 4.0 * s
             bx = spec_x0 + i * (bar_w + spacing)
             bh = min(43.0 * s, max(4.0 * s, target_h))
-            bar_color = _interpolate_color("#e0f2fe", glow_color, t)
+            eq_base = "#fef3c7" if self.theme == "seiko" else "#e0f2fe"
+            bar_color = _interpolate_color(eq_base, glow_color, t)
             self.canvas.create_line(bx, spec_y2 - 2 * s - bh, bx, spec_y2 - 2 * s, fill=bar_color, width=bar_w)
 
         # Marquee Track Line

@@ -1069,7 +1069,7 @@ class AntiTrayApp:
                         self.set_tray_state("muted", "AudioMind: Microphone Muted")
 
         self.speech_speed = 1.0
-        self.hud_theme = "cyberpunk"
+        self.hud_theme = "seiko"
 
         get_speech_player().on_state_change = _on_player_state
 
@@ -1109,7 +1109,8 @@ class AntiTrayApp:
                 "matrix": "Emerald Matrix",
                 "sunset": "Sunset Amber",
                 "violet": "Deep Space Violet",
-                "ice": "Ice White Stealth"
+                "ice": "Ice White Stealth",
+                "seiko": "Seiko Gold & Amber",
             }
             name = theme_names.get(theme, theme.title())
             self.hud.show(state="speaking", status=f"Theme: {name}")
@@ -1402,7 +1403,8 @@ class AntiTrayApp:
     def _setup_tray(self):
         settings_menu = pystray.Menu(
             item("🎨  HUD Color Theme (LED Glow)", pystray.Menu(
-                item("Cyberpunk Neon (Default)", lambda: self.set_hud_theme("cyberpunk"), checked=lambda it: self.hud.theme == "cyberpunk"),
+                item("Seiko Gold & Amber (Default)", lambda: self.set_hud_theme("seiko"), checked=lambda it: self.hud.theme == "seiko"),
+                item("Cyberpunk Neon", lambda: self.set_hud_theme("cyberpunk"), checked=lambda it: self.hud.theme == "cyberpunk"),
                 item("Emerald Matrix", lambda: self.set_hud_theme("matrix"), checked=lambda it: self.hud.theme == "matrix"),
                 item("Sunset Amber", lambda: self.set_hud_theme("sunset"), checked=lambda it: self.hud.theme == "sunset"),
                 item("Deep Space Violet", lambda: self.set_hud_theme("violet"), checked=lambda it: self.hud.theme == "violet"),
