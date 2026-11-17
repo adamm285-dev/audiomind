@@ -828,6 +828,12 @@ class WaveformHud:
         self.phase += 0.16
         self.root.after(28, self._animate)
 
+    def _draw_outlined_text(self, x: float, y: float, text: str, fill: str, outline_fill: str, font, anchor: str = "w"):
+        """Draw crisp text with a 1px dark outline for high contrast over metallic faceplates."""
+        for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            self.canvas.create_text(x + dx, y + dy, text=text, fill=outline_fill, font=font, anchor=anchor)
+        return self.canvas.create_text(x, y, text=text, fill=fill, font=font, anchor=anchor)
+
     def _draw_top_right_buttons(self, w: int, y1: int, y2: int, glow_color: str):
         """Draws Expand/Minimize [⤢/🗕], Locate-in-Chat [⌖], and Collapse-to-Tray [▼] buttons (scaled by ui_scale)."""
         s = self.ui_scale or 1.0
@@ -856,13 +862,16 @@ class WaveformHud:
                 cy_b = (sy1 + sy2) / 2 + (1 if is_prs else 0)
                 if is_prs:
                     self._draw_rounded_rect(bx1, sy1, bx2, sy2, 4, fill="", outline="#ffffff", width=1)
-                    ink = "#ffffff" if not is_light_metal else "#0f172a"
+                    ink = "#ffffff" if not is_light_metal else "#fef3c7"
                 elif is_hov:
                     self._draw_rounded_rect(bx1, sy1, bx2, sy2, 4, fill="", outline=hover_ink, width=1)
                     ink = hover_ink
                 else:
-                    ink = base_ink
-                self.canvas.create_text((bx1 + bx2) / 2, cy_b, text=glyph, fill=ink, font=("Segoe UI Symbol", g_sz, "bold"))
+                    ink = "#fef3c7" if getattr(self, "skin_finish", "dark") == "titanium" else ("#f8fafc" if is_light_metal else base_ink)
+                if is_light_metal:
+                    self._draw_outlined_text((bx1 + bx2) / 2, cy_b, glyph, fill=ink, outline_fill="#090d14", font=("Segoe UI Symbol", g_sz, "bold"), anchor="center")
+                else:
+                    self.canvas.create_text((bx1 + bx2) / 2, cy_b, text=glyph, fill=ink, font=("Segoe UI Symbol", g_sz, "bold"))
             return
 
         # Expand / Minimize button [⤢] or [🗕]
@@ -1060,12 +1069,16 @@ class WaveformHud:
             self._draw_rounded_rect(94 * s, 60 * s, 706 * s, 155 * s, 8, fill="#0d2247", outline="#071124", width=2)
             self._draw_rounded_rect(64 * s, 180 * s, 736 * s, 245 * s, 8, fill="#070c14", outline="#334155", width=1)
 
-        # 1. Recessed Titlebar Strip - pixel-locked fonts + [Session] • Chapter + bbox() clipping
-        self.canvas.create_oval(72 * s, 20 * s, 81 * s, 29 * s, fill=dot_color, outline="")
-        brand_fg = "#0f172a" if is_light_metal else "#f1f5f9"
-        brand_id = self.canvas.create_text(90 * s, 25 * s, text="AUDIOMIND", fill=brand_fg, font=("Segoe UI", sf(15), "bold"), anchor="w")
+        # 1. Recessed Titlebar Strip - larger outlined champagne/silver text + [Session] • Chapter + bbox() clipping
+        self.canvas.create_oval(72 * s, 20 * s, 81 * s, 29 * s, fill=dot_color, outline="#090d14" if is_light_metal else "")
+        finish = getattr(self, "skin_finish", "dark")
+        brand_fg = "#fef3c7" if finish == "titanium" else ("#f8fafc" if finish == "stainless" else "#f1f5f9")
+        if is_light_metal:
+            brand_id = self._draw_outlined_text(90 * s, 25 * s, "AUDIOMIND", fill=brand_fg, outline_fill="#090d14", font=("Segoe UI", sf(16), "bold"), anchor="w")
+        else:
+            brand_id = self.canvas.create_text(90 * s, 25 * s, text="AUDIOMIND", fill=brand_fg, font=("Segoe UI", sf(16), "bold"), anchor="w")
         brand_bbox = self.canvas.bbox(brand_id)
-        next_x = (brand_bbox[2] + 10 * s) if brand_bbox else 195 * s
+        next_x = (brand_bbox[2] + 10 * s) if brand_bbox else 200 * s
 
         header_status = self.format_lcd_label(self.status_text, default_status)
         session_tag = ""
@@ -1074,25 +1087,30 @@ class WaveformHud:
             session_tag = header_status[:end_b + 1].strip()
         if toast_msg:
             header_status = toast_msg
-            hdr_color = "#0f172a" if is_light_metal else glow_color
+            hdr_color = "#fde68a" if is_light_metal else glow_color
         elif self._hover_hint:
             header_status = self._hover_hint
-            hdr_color = "#0f172a" if is_light_metal else glow_color
+            hdr_color = "#fde68a" if is_light_metal else glow_color
         else:
             if session_tag and ch_label:
                 header_status = f"{session_tag} • {ch_label}"
             elif ch_label:
                 header_status = ch_label
-            hdr_color = "#0f172a" if is_light_metal else "#93c5fd"
+            hdr_color = "#fef3c7" if finish == "titanium" else ("#f1f5f9" if finish == "stainless" else "#93c5fd")
 
         max_hdr_x = w - 172 * s
-        hdr_id = self.canvas.create_text(next_x, 25 * s, text=f"|  {header_status}", fill=hdr_color, font=("Segoe UI", sf(14), "bold"), anchor="w")
+        hdr_font = ("Segoe UI", sf(15), "bold")
+        # Measure & trim status cleanly before drawing final outlined text
+        hdr_id = self.canvas.create_text(next_x, 25 * s, text=f"|  {header_status}", fill=hdr_color, font=hdr_font, anchor="w")
         hdr_bbox = self.canvas.bbox(hdr_id)
         while hdr_bbox and hdr_bbox[2] > max_hdr_x and len(header_status) > 8:
             header_status = header_status[:-4] + "…"
             self.canvas.itemconfig(hdr_id, text=f"|  {header_status}")
             hdr_bbox = self.canvas.bbox(hdr_id)
-        self._draw_top_right_buttons(w, 12, 38, glow_color)
+        if is_light_metal:
+            self.canvas.delete(hdr_id)
+            self._draw_outlined_text(next_x, 25 * s, f"|  {header_status}", fill=hdr_color, outline_fill="#090d14", font=hdr_font, anchor="w")
+        self._draw_top_right_buttons(w, 15, 35, glow_color)
 
         # 2. Cobalt-Sapphire Glass LCD Bay
         play_glyph = "⏸" if self.state == "paused" else ("▶" if self.state == "speaking" else "●")
