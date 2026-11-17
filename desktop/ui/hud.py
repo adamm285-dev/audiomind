@@ -134,7 +134,7 @@ class WaveformHud:
         # Expanded Winamp-style Reader Deck & Scale state
         self.expanded = False
         self.ui_scale = 1.0
-        self.skin_finish = "dark"  # "dark", "stainless", "titanium"
+        self.skin_finish = "titanium"  # "dark", "stainless", "titanium"
         self.compact_width = width
         self.expanded_width = 800
         self.expanded_height = 360

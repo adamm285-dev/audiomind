@@ -1415,9 +1415,9 @@ class AntiTrayApp:
                 item("150% Extra Large", lambda: self.set_hud_scale(1.5, "150%"), checked=lambda it: abs(getattr(self.hud, "ui_scale", 1.0) - 1.5) < 0.02),
             )),
             item("🎛️  Faceplate Finish", pystray.Menu(
-                item("Dark Gunmetal (Default)", lambda: self.set_hud_skin("dark", "Dark Gunmetal"), checked=lambda it: getattr(self.hud, "skin_finish", "dark") == "dark"),
-                item("Brushed Stainless Steel", lambda: self.set_hud_skin("stainless", "Stainless Steel"), checked=lambda it: getattr(self.hud, "skin_finish", "dark") == "stainless"),
-                item("Champagne Titanium", lambda: self.set_hud_skin("titanium", "Champagne Titanium"), checked=lambda it: getattr(self.hud, "skin_finish", "dark") == "titanium"),
+                item("Champagne Titanium (Default)", lambda: self.set_hud_skin("titanium", "Champagne Titanium"), checked=lambda it: getattr(self.hud, "skin_finish", "titanium") == "titanium"),
+                item("Brushed Stainless Steel", lambda: self.set_hud_skin("stainless", "Stainless Steel"), checked=lambda it: getattr(self.hud, "skin_finish", "titanium") == "stainless"),
+                item("Dark Gunmetal", lambda: self.set_hud_skin("dark", "Dark Gunmetal"), checked=lambda it: getattr(self.hud, "skin_finish", "titanium") == "dark"),
             )),
             item("⚡  Speech Speed", pystray.Menu(
                 item("1.0x  Normal", lambda: self.set_speech_speed(1.0), checked=lambda it: self.speech_speed == 1.0),
