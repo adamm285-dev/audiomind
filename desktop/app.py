@@ -1401,7 +1401,7 @@ class AntiTrayApp:
 
     def _setup_tray(self):
         settings_menu = pystray.Menu(
-            item("🎨  HUD Color Theme", pystray.Menu(
+            item("🎨  HUD Color Theme (LED Glow)", pystray.Menu(
                 item("Cyberpunk Neon (Default)", lambda: self.set_hud_theme("cyberpunk"), checked=lambda it: self.hud.theme == "cyberpunk"),
                 item("Emerald Matrix", lambda: self.set_hud_theme("matrix"), checked=lambda it: self.hud.theme == "matrix"),
                 item("Sunset Amber", lambda: self.set_hud_theme("sunset"), checked=lambda it: self.hud.theme == "sunset"),

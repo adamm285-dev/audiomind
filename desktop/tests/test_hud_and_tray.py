@@ -2318,13 +2318,23 @@ def test_expanded_winamp_hud_mode_and_live_reader():
     assert hud.height == 270
     assert hud._hit_test_button(85 * 0.75, 310 * 0.75) == "prev"
 
-    # Verify faceplate skin finishes resolve to existing PNGs
+    # Verify faceplate skin finishes resolve to existing PNGs and load cleanly via _get_scaled_skin
     import os
-    for finish in ("dark", "stainless", "titanium"):
-        hud.set_skin_finish(finish)
-        for kind in ("expanded", "mini", "pill"):
-            fn = hud._skin_filename(kind)
-            assert os.path.exists(os.path.join("desktop", "resources", "skins", fn))
+    import tkinter as tk
+    root = tk.Tk()
+    root.withdraw()
+    hud.root = root
+    try:
+        for finish in ("dark", "stainless", "titanium"):
+            hud.set_skin_finish(finish)
+            for kind, dims in (("expanded", (800, 360)), ("mini", (480, 84)), ("pill", (480, 38))):
+                fn = hud._skin_filename(kind)
+                assert os.path.exists(os.path.join("desktop", "resources", "skins", fn))
+                photo = hud._get_scaled_skin(fn, dims[0], dims[1])
+                assert photo is not None
+    finally:
+        hud.root = None
+        root.destroy()
 
 
 def test_player_locator_includes_context_and_duration():

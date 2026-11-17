@@ -5,6 +5,7 @@ audio waveforms when listening, thinking, speaking, or paused.
 Positioned discreetly above the Windows taskbar and system tray clock.
 """
 import math
+import os
 import time
 import threading
 import tkinter as tk
@@ -1074,7 +1075,7 @@ class WaveformHud:
 
         # 3. Smoked-Obsidian Live Reader Bay
         reader_hdr = "NOW READING" if self.state == "speaking" else ("PAUSED AT" if self.state == "paused" else "LIVE READER")
-        self.canvas.create_text(80 * s, 190 * s, text=reader_hdr, fill="#38bdf8", font=("Segoe UI", sf(12), "bold"), anchor="w")
+        self.canvas.create_text(80 * s, 190 * s, text=reader_hdr, fill=glow_color, font=("Segoe UI", sf(12), "bold"), anchor="w")
         self.canvas.create_text(720 * s, 190 * s, text="Click ⌖ to Locate in Chat", fill="#94a3b8", font=("Segoe UI", sf(12)), anchor="e")
 
         wrapped = self._wrap_reader_segments(ctx_before, phrase, ctx_after, max_chars=74, max_lines=2)
@@ -1106,7 +1107,7 @@ class WaveformHud:
         track_x1, track_x2 = 65 * s, 735 * s
         if prog > 0.005:
             knob_x = track_x1 + (track_x2 - track_x1) * prog
-            self.canvas.create_line(track_x1, 271 * s, knob_x, 271 * s, fill="#38bdf8", width=max(2, int(4 * s)), capstyle="round")
+            self.canvas.create_line(track_x1, 271 * s, knob_x, 271 * s, fill=glow_color, width=max(2, int(4 * s)), capstyle="round")
             self._draw_rounded_rect(knob_x - 6 * s, 266 * s, knob_x + 6 * s, 276 * s, 3, fill="#e2e8f0", outline="#1e293b", width=1)
 
         # 5. Sculpted Hardware Button Overlays
@@ -1274,7 +1275,7 @@ class WaveformHud:
 
         if self.state in ("speaking", "paused") and prog > 0.005:
             self.canvas.create_line(58 * s, 39 * s, 422 * s, 39 * s, fill="#10254a", width=max(1, int(2 * s)))
-            self.canvas.create_line(58 * s, 39 * s, (58 + 364 * prog) * s, 39 * s, fill="#38bdf8", width=max(1, int(2 * s)))
+            self.canvas.create_line(58 * s, 39 * s, (58 + 364 * prog) * s, 39 * s, fill=glow_color, width=max(1, int(2 * s)))
 
         btn_y1, btn_y2 = 52 * s, 74 * s
         cy = (btn_y1 + btn_y2) / 2
@@ -1346,7 +1347,7 @@ class WaveformHud:
             self._draw_mini_spectrum(314 * s, dot_y, glow_color, bar_color1, bar_color2, s)
 
         if self.state in ("speaking", "paused") and prog > 0.005:
-            self.canvas.create_line(58 * s, h - 4 * s, (58 + 364 * prog) * s, h - 4 * s, fill="#38bdf8", width=max(1, int(2 * s)))
+            self.canvas.create_line(58 * s, h - 4 * s, (58 + 364 * prog) * s, h - 4 * s, fill=glow_color, width=max(1, int(2 * s)))
 
     def _draw_frame(self):
         self.canvas.delete("all")
