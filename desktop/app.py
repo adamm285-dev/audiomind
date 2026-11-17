@@ -1129,6 +1129,20 @@ class AntiTrayApp:
                 if not is_speech_active():
                     threading.Thread(target=self._hide_hud_after_delay, args=(1.6,), daemon=True).start()
 
+    def set_hud_skin(self, finish: str, label: str = None, _icon=None, _item=None):
+        """Set car-deck faceplate finish ('dark', 'stainless', 'titanium')."""
+        if hasattr(self.hud, "set_skin_finish"):
+            self.hud.set_skin_finish(finish)
+        name = label or finish.title()
+        print(f"[*] HUD Faceplate Finish set to: {name}")
+        if getattr(self, "hud_enabled", False):
+            if hasattr(self.hud, "flash_action"):
+                self.hud.flash_action(f"🎛️  Faceplate: {name}", duration_sec=1.5)
+            if not self.hud.visible:
+                self.hud.show(state="listening" if not getattr(self, "muted", False) else "muted", status=f"Faceplate: {name}")
+                if not is_speech_active():
+                    threading.Thread(target=self._hide_hud_after_delay, args=(1.6,), daemon=True).start()
+
     def set_speech_speed(self, speed: float, icon=None, item=None):
         """Set global neural speech playback rate with HUD confirmation."""
         self.speech_speed = speed
@@ -1399,6 +1413,11 @@ class AntiTrayApp:
                 item("100% Standard (Default)", lambda: self.set_hud_scale(1.0, "100%"), checked=lambda it: abs(getattr(self.hud, "ui_scale", 1.0) - 1.0) < 0.02),
                 item("125% Large", lambda: self.set_hud_scale(1.25, "125%"), checked=lambda it: abs(getattr(self.hud, "ui_scale", 1.0) - 1.25) < 0.02),
                 item("150% Extra Large", lambda: self.set_hud_scale(1.5, "150%"), checked=lambda it: abs(getattr(self.hud, "ui_scale", 1.0) - 1.5) < 0.02),
+            )),
+            item("🎛️  Faceplate Finish", pystray.Menu(
+                item("Dark Gunmetal (Default)", lambda: self.set_hud_skin("dark", "Dark Gunmetal"), checked=lambda it: getattr(self.hud, "skin_finish", "dark") == "dark"),
+                item("Brushed Stainless Steel", lambda: self.set_hud_skin("stainless", "Stainless Steel"), checked=lambda it: getattr(self.hud, "skin_finish", "dark") == "stainless"),
+                item("Champagne Titanium", lambda: self.set_hud_skin("titanium", "Champagne Titanium"), checked=lambda it: getattr(self.hud, "skin_finish", "dark") == "titanium"),
             )),
             item("⚡  Speech Speed", pystray.Menu(
                 item("1.0x  Normal", lambda: self.set_speech_speed(1.0), checked=lambda it: self.speech_speed == 1.0),

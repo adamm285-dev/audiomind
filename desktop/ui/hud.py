@@ -133,6 +133,7 @@ class WaveformHud:
         # Expanded Winamp-style Reader Deck & Scale state
         self.expanded = False
         self.ui_scale = 1.0
+        self.skin_finish = "dark"  # "dark", "stainless", "titanium"
         self.compact_width = width
         self.expanded_width = 800
         self.expanded_height = 360
@@ -191,6 +192,23 @@ class WaveformHud:
             self.root.after(0, self._check_expansion)
         else:
             self._check_expansion()
+
+    def set_skin_finish(self, finish: str):
+        """Set the car-deck faceplate finish ('dark', 'stainless', 'titanium')."""
+        if finish not in ("dark", "stainless", "titanium"):
+            return
+        with self._lock:
+            self.skin_finish = finish
+            self._skin_cache.clear()
+
+    def _skin_filename(self, kind: str) -> str:
+        """Resolve skin PNG filename for 'expanded', 'mini', or 'pill' and active skin_finish."""
+        finish = getattr(self, "skin_finish", "dark")
+        if kind == "expanded":
+            return "winamp_car_deck_dark.png" if finish == "dark" else f"winamp_car_deck_{finish}.png"
+        if kind == "mini":
+            return "winamp_car_deck_mini.png" if finish == "dark" else f"winamp_car_deck_mini_{finish}.png"
+        return "winamp_car_deck_pill.png" if finish == "dark" else f"winamp_car_deck_pill_{finish}.png"
 
     def _active_mode(self) -> str:
         """Return 'expanded', 'dock', or 'pill' independent of ui_scale."""
@@ -955,7 +973,8 @@ class WaveformHud:
             q_cnt = self.queue_count
             spd_lbl = self.speed_label
 
-        skin = self._get_scaled_skin("winamp_car_deck_dark.png", w, h)
+        skin = self._get_scaled_skin(self._skin_filename("expanded"), w, h)
+        is_light_metal = getattr(self, "skin_finish", "dark") in ("stainless", "titanium")
         if skin is not None:
             self.canvas.create_image(0, 0, anchor="nw", image=skin)
         else:
@@ -965,7 +984,8 @@ class WaveformHud:
 
         # 1. Recessed Titlebar Strip - pixel-locked fonts + [Session] • Chapter + bbox() clipping
         self.canvas.create_oval(72 * s, 20 * s, 81 * s, 29 * s, fill=dot_color, outline="")
-        brand_id = self.canvas.create_text(90 * s, 25 * s, text="AUDIOMIND", fill="#f1f5f9", font=("Segoe UI", sf(15), "bold"), anchor="w")
+        brand_fg = "#0f172a" if is_light_metal else "#f1f5f9"
+        brand_id = self.canvas.create_text(90 * s, 25 * s, text="AUDIOMIND", fill=brand_fg, font=("Segoe UI", sf(15), "bold"), anchor="w")
         brand_bbox = self.canvas.bbox(brand_id)
         next_x = (brand_bbox[2] + 10 * s) if brand_bbox else 195 * s
 
@@ -976,16 +996,16 @@ class WaveformHud:
             session_tag = header_status[:end_b + 1].strip()
         if toast_msg:
             header_status = toast_msg
-            hdr_color = glow_color
+            hdr_color = "#0369a1" if is_light_metal else glow_color
         elif self._hover_hint:
             header_status = self._hover_hint
-            hdr_color = glow_color
+            hdr_color = "#0369a1" if is_light_metal else glow_color
         else:
             if session_tag and ch_label:
                 header_status = f"{session_tag} • {ch_label}"
             elif ch_label:
                 header_status = ch_label
-            hdr_color = "#93c5fd"
+            hdr_color = "#1e3a8a" if is_light_metal else "#93c5fd"
 
         max_hdr_x = w - 172 * s
         hdr_id = self.canvas.create_text(next_x, 25 * s, text=f"|  {header_status}", fill=hdr_color, font=("Segoe UI", sf(14), "bold"), anchor="w")
@@ -1104,11 +1124,11 @@ class WaveformHud:
                 self._draw_rounded_rect(bx1, btn_y1, bx2, btn_y2, 6, fill="", outline="#60a5fa", width=1)
                 txt_fill, draw_cy = "#93c5fd", cy
             elif btn_id == "play_pause":
-                rim = "#facc15" if self.state == "paused" else "#38bdf8"
+                rim = "#facc15" if self.state == "paused" else ("#0284c7" if is_light_metal else "#38bdf8")
                 self._draw_rounded_rect(bx1, btn_y1, bx2, btn_y2, 6, fill="", outline=rim, width=1)
-                txt_fill, draw_cy = ("#fde047" if self.state == "paused" else "#e0f2fe"), cy
+                txt_fill, draw_cy = ("#b45309" if (self.state == "paused" and is_light_metal) else ("#fde047" if self.state == "paused" else ("#0f172a" if is_light_metal else "#e0f2fe"))), cy
             else:
-                txt_fill, draw_cy = "#f1f5f9", cy
+                txt_fill, draw_cy = ("#0f172a" if is_light_metal else "#f1f5f9"), cy
             font_spec = ("Segoe UI Symbol", sf(14), "bold") if "5s" in icon else ("Segoe UI Symbol", sf(16))
             self.canvas.create_text((bx1 + bx2) / 2, draw_cy, text=icon, fill=txt_fill, font=font_spec)
 
@@ -1118,12 +1138,12 @@ class WaveformHud:
         sp_pressed = (self.pressed_button == "speed")
         if sp_pressed:
             self._draw_rounded_rect(sp_x1, btn_y1, sp_x2, btn_y2, 14, fill="", outline="#ffffff", width=1)
-            sp_txt, sp_cy = "#ffffff", cy + 1
+            sp_txt, sp_cy = ("#0f172a" if is_light_metal else "#ffffff"), cy + 1
         elif sp_hover:
             self._draw_rounded_rect(sp_x1, btn_y1, sp_x2, btn_y2, 14, fill="", outline="#60a5fa", width=1)
-            sp_txt, sp_cy = "#93c5fd", cy
+            sp_txt, sp_cy = ("#1d4ed8" if is_light_metal else "#93c5fd"), cy
         else:
-            sp_txt, sp_cy = "#e2e8f0", cy
+            sp_txt, sp_cy = ("#0f172a" if is_light_metal else "#e2e8f0"), cy
         self.canvas.create_text((sp_x1 + sp_x2) / 2, sp_cy, text=f"⚡ SPEED  {spd_lbl}", fill=sp_txt, font=("Consolas", sf(14), "bold"))
 
     def _draw_frame(self):
@@ -1211,7 +1231,8 @@ class WaveformHud:
         """Render the miniature '90s car-deck compact dock (base 480x84) matching the big HUD."""
         s = self.ui_scale or 1.0
         sf = lambda px: -max(8, int(round(px * s)))
-        skin = self._get_scaled_skin("winamp_car_deck_mini.png", w, h)
+        skin = self._get_scaled_skin(self._skin_filename("mini"), w, h)
+        is_light_metal = getattr(self, "skin_finish", "dark") in ("stainless", "titanium")
         if skin is not None:
             self.canvas.create_image(0, 0, anchor="nw", image=skin)
         else:
@@ -1268,18 +1289,18 @@ class WaveformHud:
                 self._draw_rounded_rect(bx1, btn_y1, bx2, btn_y2, 4, fill="", outline="#60a5fa", width=1)
                 txt_fill, draw_cy = "#93c5fd", cy
             elif btn_id == "play_pause":
-                rim = "#facc15" if self.state == "paused" else "#38bdf8"
+                rim = "#facc15" if self.state == "paused" else ("#0284c7" if is_light_metal else "#38bdf8")
                 self._draw_rounded_rect(bx1, btn_y1, bx2, btn_y2, 4, fill="", outline=rim, width=1)
-                txt_fill, draw_cy = ("#fde047" if self.state == "paused" else "#e0f2fe"), cy
+                txt_fill, draw_cy = ("#b45309" if (self.state == "paused" and is_light_metal) else ("#fde047" if self.state == "paused" else ("#0f172a" if is_light_metal else "#e0f2fe"))), cy
             else:
-                txt_fill, draw_cy = "#f1f5f9", cy
+                txt_fill, draw_cy = ("#0f172a" if is_light_metal else "#f1f5f9"), cy
             f_spec = ("Segoe UI Symbol", sf(12), "bold") if "5s" in icon else ("Segoe UI Symbol", sf(14))
             self.canvas.create_text((bx1 + bx2) / 2, draw_cy, text=icon, fill=txt_fill, font=f_spec)
 
         # Right pill button: quick expand to Reader Deck
         ex_x1, ex_x2 = 359 * s, 445 * s
         ex_hover = (self.hovered_button == "expand")
-        ex_txt = "#93c5fd" if ex_hover else "#e2e8f0"
+        ex_txt = ("#1d4ed8" if is_light_metal else "#93c5fd") if ex_hover else ("#0f172a" if is_light_metal else "#e2e8f0")
         if ex_hover:
             self._draw_rounded_rect(ex_x1, btn_y1, ex_x2, btn_y2, 9, fill="", outline="#60a5fa", width=1)
         self.canvas.create_text((ex_x1 + ex_x2) / 2, cy, text="⤢ READER", fill=ex_txt, font=("Consolas", sf(12), "bold"))
@@ -1288,7 +1309,7 @@ class WaveformHud:
         """Render the miniature '90s car-deck idle pill (base 480x38) matching the big HUD."""
         s = self.ui_scale or 1.0
         sf = lambda px: -max(8, int(round(px * s)))
-        skin = self._get_scaled_skin("winamp_car_deck_pill.png", w, h)
+        skin = self._get_scaled_skin(self._skin_filename("pill"), w, h)
         if skin is not None:
             self.canvas.create_image(0, 0, anchor="nw", image=skin)
         else:

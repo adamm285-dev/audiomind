@@ -2318,6 +2318,14 @@ def test_expanded_winamp_hud_mode_and_live_reader():
     assert hud.height == 270
     assert hud._hit_test_button(85 * 0.75, 310 * 0.75) == "prev"
 
+    # Verify faceplate skin finishes resolve to existing PNGs
+    import os
+    for finish in ("dark", "stainless", "titanium"):
+        hud.set_skin_finish(finish)
+        for kind in ("expanded", "mini", "pill"):
+            fn = hud._skin_filename(kind)
+            assert os.path.exists(os.path.join("desktop", "resources", "skins", fn))
+
 
 def test_player_locator_includes_context_and_duration():
     """Verify get_locator_at_sample returns context_before, context_after, and duration_seconds."""
