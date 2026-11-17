@@ -81,10 +81,11 @@ This repository is that complete, end-to-end full-stack voice companion system.
 ## Subsystems
 
 ### 1. Desktop Voice Harness (`desktop/`)
-* **System Tray & Winamp-Style Car-Deck HUD**: Native Windows notification tray app with a dark menu, **Launch on Windows Startup** toggle, **HUD Scale** presets (`75%` to `150%`), and a uniform `'90s` dark gunmetal car-deck HUD in both compact (`480x38` / `480x84`) and **Expanded Reader** (`⤢`) modes. The expanded deck displays a digital `M:SS / M:SS` timer, 14-band spectrum analyzer, chapter marquee, speed cycle pill, and a live highlighted **Now Reading** transcript panel so you can glance at what is being read or click `⌖` to locate it in chat.
+* **System Tray & Winamp-Style Car-Deck HUD**: Native Windows notification tray app with a dark menu, **Launch on Windows Startup** toggle, **HUD Scale** presets (`75%` to `150%`), **Faceplate Finishes** (`Champagne Titanium`, `Brushed Stainless Steel`, `Dark Gunmetal`), and **LED Glow Themes** (including **Seiko Gold & Amber**). Both the compact (`480x38` / `480x84`) and **Expanded Reader** (`⤢`) decks display a 7-segment Seiko digital timer, 14-band spectrum analyzer, chapter marquee, speed cycle pill, and a live highlighted **Now Reading** transcript panel so you can glance at what is being read or click `⌖` to locate it in chat.
 
 <p align="center">
-  <img src="media/audiomindhudpic.PNG" alt="AudioMind Expanded Winamp-Style Car-Deck HUD" width="600">
+  <img src="media/audiomindhudpic.PNG" alt="AudioMind Champagne Titanium HUD (Seiko Gold & Amber)" width="49%">
+  <img src="media/audiomind_hud_stainless.jpg" alt="AudioMind Brushed Stainless Steel HUD" width="49%">
 </p>
 
 <p align="center">
