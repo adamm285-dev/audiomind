@@ -1,0 +1,10 @@
+{
+  "name": "audiomind",
+  "version": "1.0.0",
+  "description": "AudioMind voice pair programmer plugin: speak notifications aloud, query desktop HUD status, and format chaptered responses for hands-free listening.",
+  "logo": "assets/logo.svg",
+  "suggestedPrompts": [
+    "Check if AudioMind is running and list available voices",
+    "Speak a short status update using AudioMind"
+  ]
+}
