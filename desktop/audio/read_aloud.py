@@ -741,6 +741,20 @@ def capture_highlighted_text(target_hwnd: Optional[int] = None) -> Optional[str]
     except ImportError:
         pyperclip = None
 
+    if sys.platform == "darwin" and pyperclip:
+        try:
+            import subprocess
+            subprocess.run(
+                ["osascript", "-e", 'tell application "System Events" to keystroke "c" using command down'],
+                capture_output=True,
+                timeout=2,
+            )
+            time.sleep(0.15)
+            t = pyperclip.paste()
+            return t.strip() if t and t.strip() else None
+        except Exception:
+            pass
+
     if sys.platform != "win32" or not pyperclip:
         if pyperclip:
             try:

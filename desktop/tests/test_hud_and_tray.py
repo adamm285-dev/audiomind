@@ -2337,6 +2337,70 @@ def test_expanded_winamp_hud_mode_and_live_reader():
         root.destroy()
 
 
+def test_macos_portability_adapters(monkeypatch, tmp_path):
+    """Verify macOS (darwin) adapters for startup LaunchAgent, CoreAudio stream, work area, and say TTS."""
+    import os
+    import sys
+    import types
+    import wave
+    import numpy as np
+    import desktop.app as app_module
+    import desktop.ui.hud as hud_module
+    import desktop.audio.wasapi_stream as wasapi_module
+    import desktop.audio.tts as tts_module
+
+    # 1. macOS LaunchAgent startup toggle
+    plist_path = tmp_path / "com.audiomind.tray.plist"
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(app_module, "MACOS_LAUNCH_AGENT_PLIST", str(plist_path))
+    assert app_module.is_windows_startup_enabled() is False
+    assert app_module.set_windows_startup_enabled(True) is True
+    assert plist_path.exists()
+    assert "com.audiomind.tray" in plist_path.read_text(encoding="utf-8")
+    assert app_module.set_windows_startup_enabled(False) is False
+    assert not plist_path.exists()
+
+    # 2. macOS HUD work-area fallback
+    monkeypatch.setattr(hud_module.sys, "platform", "darwin")
+    area = hud_module.get_primary_work_area()
+    assert len(area) == 4 and area[2] > 0 and area[3] > 0
+
+    # 3. macOS sounddevice fallback in WasapiAecStream
+    class FakeSDStream:
+        def __init__(self, samplerate, channels, dtype, blocksize):
+            self.blocksize = blocksize
+            self.started = False
+        def start(self): self.started = True
+        def read(self, n): return np.zeros((n, 1), dtype=np.float32), False
+        def stop(self): self.started = False
+        def close(self): pass
+
+    monkeypatch.setattr(wasapi_module.sys, "platform", "darwin")
+    monkeypatch.setattr(wasapi_module, "sd", types.SimpleNamespace(InputStream=FakeSDStream))
+    stream = wasapi_module.WasapiAecStream(target_sample_rate=16000, frame_duration_ms=80)
+    stream.initialize()
+    assert stream._use_sounddevice is True
+    chunk = stream.read_chunk()
+    assert chunk.dtype == np.int16 and len(chunk) == 1280
+    stream.close()
+
+    # 4. macOS say offline TTS fallback
+    def fake_run(cmd, capture_output=True, timeout=15):
+        out_wav = cmd[2]
+        with wave.open(out_wav, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(48000)
+            wf.writeframes(np.zeros(480, dtype=np.int16).tobytes())
+        return types.SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(tts_module.sys, "platform", "darwin")
+    monkeypatch.setattr(tts_module.subprocess, "run", fake_run)
+    pcm = tts_module.synth_sapi_pcm("Hello Mac")
+    assert pcm.shape == (480, 2) and pcm.dtype == np.float32
+
+
+
 def test_player_locator_includes_context_and_duration():
     """Verify get_locator_at_sample returns context_before, context_after, and duration_seconds."""
     import numpy as np

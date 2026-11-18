@@ -6,6 +6,7 @@ Positioned discreetly above the Windows taskbar and system tray clock.
 """
 import math
 import os
+import sys
 import time
 import threading
 import tkinter as tk
@@ -13,7 +14,9 @@ import ctypes
 from ctypes import wintypes
 
 def attach_to_default_desktop():
-    """Ensure the calling thread is attached to the user's interactive 'Default' desktop."""
+    """Ensure the calling thread is attached to the user's interactive 'Default' desktop on Windows."""
+    if sys.platform != "win32":
+        return
     try:
         u = ctypes.windll.user32
         DESKTOP_ALL = 0x01FF
@@ -24,15 +27,23 @@ def attach_to_default_desktop():
         pass
 
 def get_primary_work_area():
-    """Returns (left, top, right, bottom) of the primary display work area excluding the taskbar."""
+    """Returns (left, top, right, bottom) of the primary display work area excluding taskbar/dock."""
+    if sys.platform == "win32":
+        try:
+            user32 = ctypes.windll.user32
+            rect = wintypes.RECT()
+            if user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0):  # SPI_GETWORKAREA
+                return (rect.left, rect.top, rect.right, rect.bottom)
+        except Exception:
+            pass
+        return (0, 0, 1920, 1040)
     try:
-        user32 = ctypes.windll.user32
-        rect = wintypes.RECT()
-        if user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0):  # SPI_GETWORKAREA
-            return (rect.left, rect.top, rect.right, rect.bottom)
+        tmp = tk._default_root
+        if tmp:
+            return (0, 25, tmp.winfo_screenwidth(), tmp.winfo_screenheight() - 60)
     except Exception:
         pass
-    return (0, 0, 1920, 1040)
+    return (0, 25, 1440, 840)
 
 THEME_PALETTES = {
     "cyberpunk": {
@@ -424,12 +435,13 @@ class WaveformHud:
             self._current_y = target_y
             try:
                 self.root.geometry(f"{self.width}x{self.height}+{target_x}+{target_y}")
-                hwnd = int(self.root.wm_frame(), 16)
-                user32 = ctypes.windll.user32
-                SWP_NOACTIVATE = 0x0010
-                SWP_SHOWWINDOW = 0x0040
-                HWND_TOPMOST = -1
-                user32.SetWindowPos(hwnd, HWND_TOPMOST, target_x, target_y, self.width, self.height, SWP_NOACTIVATE | SWP_SHOWWINDOW)
+                if sys.platform == "win32":
+                    hwnd = int(self.root.wm_frame(), 16)
+                    user32 = ctypes.windll.user32
+                    SWP_NOACTIVATE = 0x0010
+                    SWP_SHOWWINDOW = 0x0040
+                    HWND_TOPMOST = -1
+                    user32.SetWindowPos(hwnd, HWND_TOPMOST, target_x, target_y, self.width, self.height, SWP_NOACTIVATE | SWP_SHOWWINDOW)
             except Exception:
                 pass
 
@@ -668,18 +680,19 @@ class WaveformHud:
         self.root.geometry(f"{self.width}x{self.height}+{x}+{y}")
 
         # Position precisely via Win32 without stealing focus
-        try:
-            hwnd = int(self.root.wm_frame(), 16)
-            user32 = ctypes.windll.user32
-            # WS_EX_TOOLWINDOW = 0x0080, WS_EX_NOACTIVATE = 0x08000000
-            ex_style = user32.GetWindowLongW(hwnd, -20)
-            user32.SetWindowLongW(hwnd, -20, ex_style | 0x0080 | 0x08000000)
-            SWP_NOACTIVATE = 0x0010
-            SWP_SHOWWINDOW = 0x0040
-            HWND_TOPMOST = -1
-            user32.SetWindowPos(hwnd, HWND_TOPMOST, x, y, self.width, self.height, SWP_NOACTIVATE | SWP_SHOWWINDOW)
-        except Exception:
-            pass
+        if sys.platform == "win32":
+            try:
+                hwnd = int(self.root.wm_frame(), 16)
+                user32 = ctypes.windll.user32
+                # WS_EX_TOOLWINDOW = 0x0080, WS_EX_NOACTIVATE = 0x08000000
+                ex_style = user32.GetWindowLongW(hwnd, -20)
+                user32.SetWindowLongW(hwnd, -20, ex_style | 0x0080 | 0x08000000)
+                SWP_NOACTIVATE = 0x0010
+                SWP_SHOWWINDOW = 0x0040
+                HWND_TOPMOST = -1
+                user32.SetWindowPos(hwnd, HWND_TOPMOST, x, y, self.width, self.height, SWP_NOACTIVATE | SWP_SHOWWINDOW)
+            except Exception:
+                pass
 
     def reset_position(self):
         """Reset custom drag position and snap back to default screen corner."""
@@ -743,14 +756,15 @@ class WaveformHud:
                 self.root.deiconify()
                 self.root.lift()
                 self.root.attributes("-topmost", True)
-                hwnd = int(self.root.wm_frame(), 16)
-                user32 = ctypes.windll.user32
-                SWP_NOACTIVATE = 0x0010
-                SWP_SHOWWINDOW = 0x0040
-                SWP_NOMOVE = 0x0002
-                SWP_NOSIZE = 0x0001
-                HWND_TOPMOST = -1
-                user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW)
+                if sys.platform == "win32":
+                    hwnd = int(self.root.wm_frame(), 16)
+                    user32 = ctypes.windll.user32
+                    SWP_NOACTIVATE = 0x0010
+                    SWP_SHOWWINDOW = 0x0040
+                    SWP_NOMOVE = 0x0002
+                    SWP_NOSIZE = 0x0001
+                    HWND_TOPMOST = -1
+                    user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW)
         except Exception:
             pass
 

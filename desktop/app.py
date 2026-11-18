@@ -20,7 +20,9 @@ if repo_root not in sys.path:
 import ctypes
 
 def attach_to_default_desktop():
-    """Ensure the calling process and thread are attached to the interactive 'WinSta0\\Default' desktop."""
+    """Ensure the calling process and thread are attached to the interactive 'WinSta0\\Default' desktop on Windows."""
+    if sys.platform != "win32":
+        return
     try:
         u = ctypes.windll.user32
         WINSTA_ALL = 0x037F
@@ -232,7 +234,9 @@ except ImportError:
     Model = None
 
 def attach_to_default_desktop():
-    """Ensure the calling process and thread are attached to the interactive 'WinSta0\\Default' desktop."""
+    """Ensure the calling process and thread are attached to the interactive 'WinSta0\\Default' desktop on Windows."""
+    if sys.platform != "win32":
+        return
     try:
         u = ctypes.windll.user32
         WINSTA_ALL = 0x037F
@@ -905,8 +909,13 @@ def get_startup_command() -> str:
     return f'wscript.exe "{vbs_path}"'
 
 
+MACOS_LAUNCH_AGENT_PLIST = os.path.expanduser("~/Library/LaunchAgents/com.audiomind.tray.plist")
+
+
 def is_windows_startup_enabled() -> bool:
-    """Return True if AudioMind is registered in HKCU Run for Windows startup."""
+    """Return True if AudioMind is registered for OS startup (HKCU Run on Windows, LaunchAgent on macOS)."""
+    if sys.platform == "darwin":
+        return os.path.exists(MACOS_LAUNCH_AGENT_PLIST)
     try:
         import winreg
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_REG_KEY, 0, winreg.KEY_READ) as key:
@@ -919,7 +928,33 @@ def is_windows_startup_enabled() -> bool:
 
 
 def set_windows_startup_enabled(enabled: bool) -> bool:
-    """Enable or disable AudioMind auto-launch on Windows startup via HKCU Run."""
+    """Enable or disable AudioMind auto-launch on OS startup (Windows HKCU Run or macOS LaunchAgent)."""
+    if sys.platform == "darwin":
+        try:
+            if enabled:
+                os.makedirs(os.path.dirname(MACOS_LAUNCH_AGENT_PLIST), exist_ok=True)
+                app_script = os.path.abspath(__file__)
+                repo_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+                plist_xml = (
+                    '<?xml version="1.0" encoding="UTF-8"?>\n'
+                    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+                    '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+                    '<plist version="1.0"><dict>\n'
+                    '  <key>Label</key><string>com.audiomind.tray</string>\n'
+                    f'  <key>ProgramArguments</key><array><string>{sys.executable}</string><string>{app_script}</string></array>\n'
+                    f'  <key>WorkingDirectory</key><string>{repo_dir}</string>\n'
+                    '  <key>RunAtLoad</key><true/>\n'
+                    '</dict></plist>\n'
+                )
+                with open(MACOS_LAUNCH_AGENT_PLIST, "w", encoding="utf-8") as f:
+                    f.write(plist_xml)
+                return True
+            if os.path.exists(MACOS_LAUNCH_AGENT_PLIST):
+                os.remove(MACOS_LAUNCH_AGENT_PLIST)
+            return False
+        except Exception as exc:
+            print(f"[!] Failed to update macOS LaunchAgent startup setting: {exc}")
+            return is_windows_startup_enabled()
     try:
         import winreg
         if enabled:
@@ -2616,6 +2651,18 @@ class AntiTrayApp:
         Returns:
             (best_hwnd, best_rect)
         """
+        if sys.platform == "darwin":
+            try:
+                import subprocess
+                res = subprocess.run(
+                    ["osascript", "-e", 'tell application "Antigravity" to activate'],
+                    capture_output=True,
+                    timeout=3,
+                )
+                return (1, True) if res.returncode == 0 else (None, None)
+            except Exception as e:
+                print(f"[!] macOS focus error: {e}")
+                return None, None
         try:
             attach_to_default_desktop()
             user32 = ctypes.windll.user32
@@ -2732,6 +2779,29 @@ class AntiTrayApp:
         (or if press_enter is None and self.auto_submit is enabled).
         Remote dispatches MUST pass press_enter=False (never auto-submits remote input).
         """
+        if sys.platform == "darwin":
+            try:
+                import subprocess
+                best_hwnd, _ = self._focus_antigravity()
+                if not best_hwnd:
+                    self.last_injection_error = "Antigravity window not found. Nothing was typed."
+                    return False
+                set_clipboard_text(prompt)
+                time.sleep(0.18)
+                should_submit = self.auto_submit if press_enter is None else bool(press_enter)
+                script = 'tell application "System Events" to keystroke "v" using command down'
+                if should_submit:
+                    script += '\ndelay 0.08\ntell application "System Events" to key code 36'
+                res = subprocess.run(["osascript", "-e", script], capture_output=True, timeout=3)
+                if res.returncode != 0:
+                    self.last_injection_error = "macOS Accessibility permission required to paste into Antigravity."
+                    return False
+                self.last_injection_error = None
+                return True
+            except Exception as e:
+                self.last_injection_error = f"macOS injection error: {e}"
+                return False
+
         try:
             user32 = ctypes.windll.user32
 
@@ -3325,6 +3395,26 @@ class AntiTrayApp:
 
     def _start_hotkey_listener(self):
         """Registers Ctrl+Alt+R (Read Highlight), Ctrl+Alt+M (Mute), Ctrl+Alt+N (Skip Output), Ctrl+Alt+P (Previous Output), and Ctrl+Alt+F (Locate in Chat) hotkeys."""
+        if sys.platform == "darwin":
+            def _mac_listener():
+                try:
+                    from pynput import keyboard
+                    with keyboard.GlobalHotKeys({
+                        "<ctrl>+<alt>+r": self.read_highlighted_text,
+                        "<ctrl>+<alt>+m": lambda: self.toggle_mute(None, None),
+                        "<ctrl>+<alt>+n": self.skip_current_output,
+                        "<ctrl>+<alt>+p": self.go_back_output,
+                        "<ctrl>+<alt>+f": self.locate_in_chat,
+                    }) as h:
+                        print("[*] macOS Global Hotkeys active (Ctrl+Opt+R/M/N/P/F).")
+                        while self.running:
+                            time.sleep(0.5)
+                        h.stop()
+                except Exception as e:
+                    print(f"[!] macOS global hotkeys unavailable: {e}")
+            threading.Thread(target=_mac_listener, daemon=True).start()
+            return
+
         def _listener():
             if sys.platform != "win32":
                 return
@@ -3441,10 +3531,19 @@ if __name__ == "__main__":
     attach_to_default_desktop()
 
     # Ensure single instance to prevent duplicate tray icons or audio stream conflicts
-    mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "AudioMind_TrayApp_Mutex")
-    if ctypes.windll.kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
-        print("[!] Another instance of AudioMind is already running.")
-        sys.exit(0)
+    if sys.platform == "win32":
+        mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "AudioMind_TrayApp_Mutex")
+        if ctypes.windll.kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+            print("[!] Another instance of AudioMind is already running.")
+            sys.exit(0)
+    else:
+        try:
+            import fcntl
+            _lock_fp = open("/tmp/audiomind_tray.lock", "w")
+            fcntl.flock(_lock_fp.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except Exception:
+            print("[!] Another instance of AudioMind is already running.")
+            sys.exit(0)
 
     app = AntiTrayApp()
     app.run()

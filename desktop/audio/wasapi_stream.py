@@ -4,20 +4,30 @@ Captures default microphone while simultaneously monitoring system speaker loopb
 Suppresses speaker audio bleed to prevent self-triggering from Samantha TTS or YouTube.
 """
 
+import sys
 import numpy as np
-import pyaudiowpatch as pyaudio
+try:
+    import pyaudiowpatch as pyaudio
+except ImportError:
+    pyaudio = None
+try:
+    import sounddevice as sd
+except ImportError:
+    sd = None
 from typing import Optional, Tuple, Callable
 import time
 
 class WasapiAecStream:
-    """Manages synchronized mic capture and speaker loopback with echo suppression."""
+    """Manages synchronized mic capture and speaker loopback with echo suppression (WASAPI on Windows, CoreAudio/sounddevice on macOS)."""
 
     def __init__(self, target_sample_rate: int = 16000, frame_duration_ms: int = 80):
         self.target_rate = target_sample_rate
         self.frame_ms = frame_duration_ms
-        self.p: Optional[pyaudio.PyAudio] = None
+        self.p = None
         self.mic_stream = None
         self.loopback_stream = None
+        self._sd_stream = None
+        self._use_sounddevice = (sys.platform != "win32" or pyaudio is None)
         self.mic_rate = 48000
         self.loopback_rate = 48000
         self.mic_chunk = int(self.mic_rate * (self.frame_ms / 1000.0))
@@ -25,6 +35,20 @@ class WasapiAecStream:
         self.is_active = False
 
     def initialize(self):
+        if self._use_sounddevice:
+            if sd is None:
+                raise RuntimeError("sounddevice is required on non-Windows platforms.")
+            self.mic_rate = self.target_rate
+            self.mic_chunk = int(self.target_rate * (self.frame_ms / 1000.0))
+            self._sd_stream = sd.InputStream(
+                samplerate=self.target_rate,
+                channels=1,
+                dtype="float32",
+                blocksize=self.mic_chunk,
+            )
+            self._sd_stream.start()
+            self.is_active = True
+            return
         self.p = pyaudio.PyAudio()
         wasapi_info = self.p.get_host_api_info_by_type(pyaudio.paWASAPI)
         
@@ -87,6 +111,21 @@ class WasapiAecStream:
         """
         if not self.is_active:
             raise RuntimeError("Stream not initialized.")
+
+        if self._use_sounddevice and self._sd_stream is not None:
+            data, _ = self._sd_stream.read(self.mic_chunk)
+            mic_np = data[:, 0] if data.ndim > 1 else data
+            mic_rms = float(np.sqrt(np.mean(mic_np ** 2))) if len(mic_np) > 0 else 0.0
+            speaker_active = False
+            try:
+                from desktop.audio.player import is_speaking
+                speaker_active = bool(is_speaking())
+            except Exception:
+                pass
+            if speaker_active:
+                mic_np = mic_np * 0.15
+            int16_mic = np.clip(mic_np * 32767.0, -32768, 32767).astype(np.int16)
+            return int16_mic, speaker_active, mic_rms
 
         # Drain mic backlog only if there is a severe delay (>480ms) from external operations
         avail_mic = self.mic_stream.get_read_available()
@@ -160,6 +199,11 @@ class WasapiAecStream:
         if not self.is_active:
             return
         try:
+            if self._sd_stream is not None:
+                avail = getattr(self._sd_stream, "read_available", 0)
+                if avail > 0:
+                    self._sd_stream.read(avail)
+                return
             if self.mic_stream:
                 avail = self.mic_stream.get_read_available()
                 if avail > 0:
@@ -181,6 +225,13 @@ class WasapiAecStream:
 
     def close(self):
         self.is_active = False
+        if self._sd_stream is not None:
+            try:
+                self._sd_stream.stop()
+                self._sd_stream.close()
+            except Exception:
+                pass
+            self._sd_stream = None
         if self.mic_stream:
             self.mic_stream.stop_stream()
             self.mic_stream.close()

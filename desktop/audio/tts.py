@@ -395,6 +395,8 @@ def synth_sapi_pcm(text: str, samplerate: int = 48000) -> np.ndarray:
     Offline local Windows TTS fallback via SAPI.SpVoice and SpMemoryStream.
     Produces 48kHz stereo float32 PCM without network dependencies or 403 errors.
     """
+    if sys.platform == "darwin":
+        return synth_macos_say_pcm(text, samplerate=samplerate)
     if sys.platform != "win32" or not text or not text.strip():
         return np.empty((0, 2), dtype=np.float32)
     try:
@@ -426,6 +428,40 @@ def synth_sapi_pcm(text: str, samplerate: int = 48000) -> np.ndarray:
     except Exception as e:
         print(f"[!] SAPI fallback error: {e}")
         return np.empty((0, 2), dtype=np.float32)
+
+
+def synth_macos_say_pcm(text: str, samplerate: int = 48000) -> np.ndarray:
+    """Offline local macOS TTS fallback via built-in `say` CLI."""
+    if sys.platform != "darwin" or not text or not text.strip():
+        return np.empty((0, 2), dtype=np.float32)
+    import tempfile
+    import wave
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
+            tmp_path = tf.name
+        cmd = ["say", "-o", tmp_path, f"--data-format=LEI16@{int(samplerate)}", text]
+        res = subprocess.run(cmd, capture_output=True, timeout=15)
+        if res.returncode != 0 or not os.path.exists(tmp_path):
+            return np.empty((0, 2), dtype=np.float32)
+        with wave.open(tmp_path, "rb") as wf:
+            frames = wf.readframes(wf.getnframes())
+            nch = wf.getnchannels()
+        if not frames:
+            return np.empty((0, 2), dtype=np.float32)
+        mono = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
+        if nch > 1:
+            mono = mono.reshape(-1, nch)[:, 0]
+        return np.column_stack([mono, mono]).astype(np.float32)
+    except Exception as e:
+        print(f"[!] macOS say fallback error: {e}")
+        return np.empty((0, 2), dtype=np.float32)
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
 
 async def _synth_one(c_text: str, voice: str = DEFAULT_VOICE, rate: str = "+0%", pitch: str = "+0Hz", timeout: float = 6.0) -> bytes:
     """Synthesizes a single chunk of text into MP3 bytes via Edge-TTS with timeout, circuit breaker and 1 retry."""
