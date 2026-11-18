@@ -2505,6 +2505,81 @@ def test_is_read_highlight_command_matches_natural_variants():
     assert is_read_highlight_command("explain how the highlighted function works in app.py") is False
 
 
+def test_speech_queue_worker_survives_tray_icon_error(monkeypatch):
+    """Verify set_tray_state and _speech_queue_worker survive WinError 1402 tray icon races and keep draining queue."""
+    import collections
+    import threading
+    import time
+    import desktop.app as app_module
+
+    spoken = []
+
+    class BrokenIcon:
+        title = ""
+        @property
+        def icon(self):
+            return None
+        @icon.setter
+        def icon(self, _val):
+            raise OSError(1402, "Invalid cursor handle.")
+
+    class DummyHud:
+        visible = False
+        def set_progress(self, _p): pass
+        def set_status(self, *a, **k): pass
+        def show(self, *a, **k): pass
+        def hide(self): pass
+
+    class DummyQueueApp:
+        def __init__(self):
+            self.running = True
+            self.muted = False
+            self.hud_enabled = True
+            self.hud_collapsed = False
+            self.is_reading_highlight = False
+            self.speech_queue = collections.deque([
+                app_module.SpeechQueueItem(text="First queued message", chat_tag="ChatA"),
+                app_module.SpeechQueueItem(text="Second queued message", chat_tag="ChatB"),
+            ])
+            self._speak_lock = threading.Lock()
+            self._tray_lock = threading.Lock()
+            self._speech_worker_event = threading.Event()
+            self._speech_worker_event.set()
+            self.current_speech_item = None
+            self.hud = DummyHud()
+            self.tray_icon = BrokenIcon()
+            self.current_state = "listening"
+            self.paused_at = None
+        def set_tray_state(self, state, title):
+            return app_module.AntiTrayApp.set_tray_state(self, state, title)
+        def _format_status_with_chat(self, action, extra=""):
+            return action
+
+    def fake_speak(text, on_start=None, on_level=None):
+        if on_start:
+            on_start()
+        spoken.append(text)
+        if len(spoken) >= 2:
+            app.running = False
+            app._speech_worker_event.set()
+
+    monkeypatch.setattr(app_module, "speak", fake_speak)
+    monkeypatch.setattr(app_module, "is_speaking", lambda: False)
+    monkeypatch.setattr(app_module, "is_paused", lambda: False)
+    monkeypatch.setattr(app_module, "get_chapter_info", lambda: (1, 1, "Overview"))
+
+    app = DummyQueueApp()
+    # Direct set_tray_state should swallow OSError 1402 cleanly
+    app.set_tray_state("listening", "AudioMind")
+
+    t = threading.Thread(target=app_module.AntiTrayApp._speech_queue_worker, args=(app,), daemon=True)
+    t.start()
+    t.join(timeout=3.0)
+
+    assert spoken == ["First queued message", "Second queued message"]
+
+
+
 
 
 

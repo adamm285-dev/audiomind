@@ -1035,6 +1035,7 @@ class AntiTrayApp:
         token = get_desktop_session_token()
         self.remote_poll_enabled = bool(self.remote_api_url and token)
         self._speak_lock = threading.Lock()
+        self._tray_lock = threading.Lock()
 
         # Initialize HUD in background thread with intuitive CD-player and click controls:
         # - Left-Click: Pause / Resume playback
@@ -1667,11 +1668,20 @@ class AntiTrayApp:
         )
 
     def set_tray_state(self, state: str, title: str):
-        """Update system tray icon and tooltip."""
+        """Update system tray icon and tooltip (thread-safe against Win32 DestroyIcon races)."""
         self.current_state = state
         if self.tray_icon:
-            self.tray_icon.title = title
-            self.tray_icon.icon = create_tray_icon_image(state, pulse=0.0)
+            lock = getattr(self, "_tray_lock", None)
+            try:
+                if lock:
+                    with lock:
+                        self.tray_icon.title = title
+                        self.tray_icon.icon = create_tray_icon_image(state, pulse=0.0)
+                else:
+                    self.tray_icon.title = title
+                    self.tray_icon.icon = create_tray_icon_image(state, pulse=0.0)
+            except Exception:
+                pass
 
     def _check_pause_hold_expiry(self) -> bool:
         """
@@ -1727,7 +1737,12 @@ class AntiTrayApp:
                     phase += 0.35
                     pulse = 0.5 * (1.0 + math.sin(phase))
                     if self.tray_icon:
-                        self.tray_icon.icon = create_tray_icon_image(state, pulse=pulse)
+                        lock = getattr(self, "_tray_lock", None)
+                        if lock:
+                            with lock:
+                                self.tray_icon.icon = create_tray_icon_image(state, pulse=pulse)
+                        else:
+                            self.tray_icon.icon = create_tray_icon_image(state, pulse=pulse)
                     time.sleep(0.12)
                 else:
                     time.sleep(0.20)
@@ -2555,25 +2570,28 @@ class AntiTrayApp:
             except Exception as e:
                 print(f"[!] Read-aloud queue worker error: {e}")
             finally:
-                if hasattr(self.hud, "set_progress"):
-                    self.hud.set_progress(0.0)
-                with self._speak_lock:
-                    self.current_speech_item = None
+                try:
+                    if hasattr(self.hud, "set_progress"):
+                        self.hud.set_progress(0.0)
+                    with self._speak_lock:
+                        self.current_speech_item = None
 
-                if len(self.speech_queue) == 0:
-                    if is_speaking():
-                        pass
-                    elif is_paused():
-                        if self.hud_enabled and not self.hud_collapsed:
-                            self.hud.set_status(self._format_status_with_chat("Paused"), state="paused")
-                        self.set_tray_state("paused", "AudioMind: Speech Paused")
-                    else:
-                        if self.hud_enabled:
-                            self.hud.hide()
-                        if not self.muted:
-                            self.set_tray_state("listening", "AudioMind: Listening for 'Hey Anti'")
+                    if len(self.speech_queue) == 0:
+                        if is_speaking():
+                            pass
+                        elif is_paused():
+                            if self.hud_enabled and not self.hud_collapsed:
+                                self.hud.set_status(self._format_status_with_chat("Paused"), state="paused")
+                            self.set_tray_state("paused", "AudioMind: Speech Paused")
                         else:
-                            self.set_tray_state("muted", "AudioMind: Microphone Muted")
+                            if self.hud_enabled:
+                                self.hud.hide()
+                            if not self.muted:
+                                self.set_tray_state("listening", "AudioMind: Listening for 'Hey Anti'")
+                            else:
+                                self.set_tray_state("muted", "AudioMind: Microphone Muted")
+                except Exception as exc:
+                    print(f"[!] Read-aloud queue cleanup error (non-fatal): {exc}")
 
     def toggle_mute(self, icon=None, item=None):
         self.muted = not self.muted
