@@ -2490,6 +2490,22 @@ def test_ollama_backend_adapter_and_mac_hotkey_labels(monkeypatch):
     assert any("Cmd+Opt+F" in t for t in root_texts)
 
 
+def test_is_read_highlight_command_matches_natural_variants():
+    """Verify natural read-highlight voice variants match without hijacking normal coding prompts."""
+    from desktop.app import is_read_highlight_command
+
+    assert is_read_highlight_command("read the highlighted script on the screen") is True
+    assert is_read_highlight_command("read the highlighted text") is True
+    assert is_read_highlight_command("please read highlighted code to me") is True
+    assert is_read_highlight_command("read what's highlighted") is True
+    assert is_read_highlight_command("read this") is True
+
+    # Normal coding prompts mentioning 'highlighted' should still pass through to chat
+    assert is_read_highlight_command("read the file and fix why highlighted text is broken") is False
+    assert is_read_highlight_command("explain how the highlighted function works in app.py") is False
+
+
+
 
 
 def test_player_locator_includes_context_and_duration():

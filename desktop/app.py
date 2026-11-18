@@ -972,6 +972,24 @@ def set_windows_startup_enabled(enabled: bool) -> bool:
         return is_windows_startup_enabled()
 
 
+def is_read_highlight_command(prompt_text: str) -> bool:
+    """Return True for short voice commands asking to read the currently highlighted/selected text."""
+    import re
+    clean = re.sub(r"[.!?,]+$", "", (prompt_text or "").lower().strip()).strip()
+    if clean in {
+        "read this", "read this aloud", "read this out loud", "read selection",
+        "read what is highlighted", "read what's highlighted", "read what i highlighted",
+        "read what is selected", "read what's selected", "read what i selected",
+    }:
+        return True
+    return bool(re.match(
+        r"^(?:please\s+)?read\s+(?:the\s+|this\s+)?(?:highlighted|selected)"
+        r"(?:\s+(?:text|script|section|part|code|content|snippet|line|lines|paragraph))?"
+        r"(?:\s+(?:on\s+(?:the\s+)?screen|to\s+me|aloud|out\s+loud))?$",
+        clean,
+    ))
+
+
 class AntiTrayApp:
     def __init__(self):
         attach_to_default_desktop()
@@ -3274,13 +3292,7 @@ class AntiTrayApp:
                                 continue
 
                             # Check for "read highlighted / selected text" voice command
-                            clean_prompt = prompt_text.lower().strip().rstrip(".!?").strip()
-                            READ_HIGHLIGHT_PHRASES = {
-                                "read this", "read highlighted text", "read selected text", "read selection",
-                                "read highlighted", "read the highlighted text", "read the selected text",
-                                "read what is highlighted", "read what's highlighted"
-                            }
-                            if clean_prompt in READ_HIGHLIGHT_PHRASES:
+                            if is_read_highlight_command(prompt_text):
                                 play_chime(rising=True)
                                 self.read_highlighted_text()
                                 aec_stream.drain()
