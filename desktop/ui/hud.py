@@ -599,7 +599,8 @@ class WaveformHud:
         if self._hit_test_locate(event.x, event.y):
             if self.hovered_button != "locate":
                 self.hovered_button = "locate"
-                self._hover_hint = "🎯  FIND PHRASE IN CHAT (Ctrl+Alt+F)"
+                mod = "Cmd+Opt" if sys.platform == "darwin" else "Ctrl+Alt"
+                self._hover_hint = f"🎯  FIND PHRASE IN CHAT ({mod}+F)"
             return
 
         if self._hit_test_expand(event.x, event.y):

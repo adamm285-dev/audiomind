@@ -1105,6 +1105,9 @@ class AntiTrayApp:
 
         self.speech_speed = 1.0
         self.hud_theme = "seiko"
+        self.agent_backend = os.getenv("AUDIOMIND_BACKEND", "antigravity").strip().lower() or "antigravity"
+        self._ollama_history = []
+        self._ollama_step = 0
 
         get_speech_player().on_state_change = _on_player_state
 
@@ -1115,7 +1118,8 @@ class AntiTrayApp:
     def _get_tray_header_text(self, item=None) -> str:
         """Dynamic high-contrast bold header for the tray context menu."""
         if self.muted:
-            return "🔴  AudioMind • Muted (Ctrl+Alt+M)"
+            mod = "Cmd+Opt" if sys.platform == "darwin" else "Ctrl+Alt"
+            return f"🔴  AudioMind • Muted ({mod}+M)"
         if is_speaking():
             tag = f" [{self.current_speech_item.chat_tag}]" if (self.current_speech_item and self.current_speech_item.chat_tag) else ""
             return f"🔊  AudioMind • Speaking{tag}"
@@ -1178,6 +1182,71 @@ class AntiTrayApp:
                 self.hud.show(state="listening" if not getattr(self, "muted", False) else "muted", status=f"Faceplate: {name}")
                 if not is_speech_active():
                     threading.Thread(target=self._hide_hud_after_delay, args=(1.6,), daemon=True).start()
+
+    def set_agent_backend(self, backend: str, label: str = None, _icon=None, _item=None):
+        """Switch active voice target backend ('antigravity' or 'ollama')."""
+        if backend not in ("antigravity", "ollama"):
+            return
+        self.agent_backend = backend
+        name = label or backend.title()
+        print(f"[*] Agent Backend set to: {name}")
+        if getattr(self, "hud_enabled", False):
+            if hasattr(self.hud, "flash_action"):
+                self.hud.flash_action(f"🤖  Backend: {name}", duration_sec=1.6)
+            if not self.hud.visible:
+                self.hud.show(state="listening" if not getattr(self, "muted", False) else "muted", status=f"Backend: {name}")
+                if not is_speech_active():
+                    threading.Thread(target=self._hide_hud_after_delay, args=(1.6,), daemon=True).start()
+
+    def _submit_to_ollama(self, prompt_text: str) -> bool:
+        """Send a spoken prompt to a local Ollama server and feed its reply into the HUD & TTS queue."""
+        base_url = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").strip().rstrip("/")
+        model = os.getenv("OLLAMA_MODEL", "").strip()
+
+        def _worker():
+            import json
+            import urllib.request
+            try:
+                chosen_model = model
+                if not chosen_model:
+                    with urllib.request.urlopen(f"{base_url}/api/tags", timeout=3) as resp:
+                        tags_data = json.loads(resp.read().decode("utf-8"))
+                    models = tags_data.get("models") or []
+                    if not models:
+                        if speak:
+                            speak("No Ollama models found. Run ollama pull first.")
+                        return
+                    chosen_model = models[0].get("name", "")
+                if not chosen_model:
+                    return
+
+                self._ollama_history.append({"role": "user", "content": prompt_text})
+                self._ollama_history = self._ollama_history[-12:]
+                payload = json.dumps({
+                    "model": chosen_model,
+                    "messages": self._ollama_history,
+                    "stream": False,
+                }).encode("utf-8")
+                req = urllib.request.Request(
+                    f"{base_url}/api/chat",
+                    data=payload,
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=60) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                reply = ((data.get("message") or {}).get("content") or "").strip()
+                if reply:
+                    self._ollama_history.append({"role": "assistant", "content": reply})
+                    self._ollama_step += 1
+                    self._on_assistant_response(reply, filepath="ollama", step_index=self._ollama_step)
+            except Exception as exc:
+                print(f"[!] Ollama backend error: {exc}")
+                if speak:
+                    speak("I couldn't reach Ollama on localhost 11434.")
+
+        threading.Thread(target=_worker, daemon=True).start()
+        return True
 
     def set_speech_speed(self, speed: float, icon=None, item=None):
         """Set global neural speech playback rate with HUD confirmation."""
@@ -1436,6 +1505,7 @@ class AntiTrayApp:
         threading.Thread(target=_preview, daemon=True).start()
 
     def _setup_tray(self):
+        mod_lbl = "Cmd+Opt" if sys.platform == "darwin" else "Ctrl+Alt"
         settings_menu = pystray.Menu(
             item("🎨  HUD Color Theme (LED Glow)", pystray.Menu(
                 item("Seiko Gold & Amber (Default)", lambda: self.set_hud_theme("seiko"), checked=lambda it: self.hud.theme == "seiko"),
@@ -1455,6 +1525,10 @@ class AntiTrayApp:
                 item("Champagne Titanium (Default)", lambda: self.set_hud_skin("titanium", "Champagne Titanium"), checked=lambda it: getattr(self.hud, "skin_finish", "titanium") == "titanium"),
                 item("Brushed Stainless Steel", lambda: self.set_hud_skin("stainless", "Stainless Steel"), checked=lambda it: getattr(self.hud, "skin_finish", "titanium") == "stainless"),
                 item("Dark Gunmetal", lambda: self.set_hud_skin("dark", "Dark Gunmetal"), checked=lambda it: getattr(self.hud, "skin_finish", "titanium") == "dark"),
+            )),
+            item("🤖  Agent Backend", pystray.Menu(
+                item("Antigravity IDE (Default)", lambda: self.set_agent_backend("antigravity", "Antigravity IDE"), checked=lambda it: getattr(self, "agent_backend", "antigravity") == "antigravity"),
+                item("Ollama (Local LLM)", lambda: self.set_agent_backend("ollama", "Ollama Local"), checked=lambda it: getattr(self, "agent_backend", "antigravity") == "ollama"),
             )),
             item("⚡  Speech Speed", pystray.Menu(
                 item("1.0x  Normal", lambda: self.set_speech_speed(1.0), checked=lambda it: self.speech_speed == 1.0),
@@ -1480,7 +1554,7 @@ class AntiTrayApp:
                 getattr(self, "toggle_skip_verification_report", lambda *a: None),
                 checked=lambda it: getattr(self, "skip_verification_report", True),
             ),
-            item("🔇  Mute Microphone  (Ctrl+Alt+M)", self.toggle_mute, checked=lambda item: self.muted),
+            item(f"🔇  Mute Microphone  ({mod_lbl}+M)", self.toggle_mute, checked=lambda item: self.muted),
             item("🌊  Desktop Waveform HUD", self.toggle_hud, checked=lambda item: self.hud_enabled),
             item("📌  Dock Waveform to Bottom-Right", self.toggle_hud_dock, checked=lambda item: self.hud.position == "bottom_right"),
             item("📌  Reset HUD Position (Snap to Corner)", getattr(self, "reset_hud_position", lambda: None)),
@@ -1527,22 +1601,22 @@ class AntiTrayApp:
             item("⏩  Forward 5 Seconds", self.forward_speech_5, enabled=lambda it: is_speech_active()),
             item("⏪  Rewind 5 Seconds", self.rewind_speech_5, enabled=lambda it: is_speech_active()),
             item("⏭️  Skip to Next Chapter", self.skip_next_chapter, enabled=lambda it: is_speech_active()),
-            item(lambda it: f"⏭️  Skip to Next Output ({len(self.speech_queue)} queued)" if len(self.speech_queue) > 0 else "⏭️  Skip to Next Output  (Ctrl+Alt+N)", self.skip_current_output, enabled=lambda it: is_speech_active() or len(self.speech_queue) > 0),
+            item(lambda it: f"⏭️  Skip to Next Output ({len(self.speech_queue)} queued)" if len(self.speech_queue) > 0 else f"⏭️  Skip to Next Output  ({mod_lbl}+N)", self.skip_current_output, enabled=lambda it: is_speech_active() or len(self.speech_queue) > 0),
             item("⏮️  Repeat Current Chapter", self.repeat_curr_chapter, enabled=lambda it: is_speech_active()),
             item("⏮️  Repeat Last Chapter / Prev", self.repeat_chapter, enabled=lambda it: is_speech_active() or bool(self.last_spoken_summary) or len(self.output_history) > 0),
             item("🔁  Repeat Current Output", self.repeat_current_output, enabled=lambda it: len(self.output_history) > 0 or bool(self.last_spoken_summary)),
-            item("⏮️  Previous Output (Go Back)  (Ctrl+Alt+P)", self.go_back_output, enabled=lambda it: len(self.output_history) > 0 or bool(self.last_spoken_summary)),
+            item(f"⏮️  Previous Output (Go Back)  ({mod_lbl}+P)", self.go_back_output, enabled=lambda it: len(self.output_history) > 0 or bool(self.last_spoken_summary)),
             item("⏹️  Stop Speaking / Interrupt", self.interrupt_speech, enabled=lambda it: is_speech_active() or len(self.speech_queue) > 0),
             item(
                 lambda it: f"🔕  Mute Session / Chat ({_get_muted_count()} muted)" if _get_muted_count() > 0 else "🔕  Mute Session / Chat",
                 session_mute_menu,
             ),
             item(
-                "🎯  Locate Current Phrase in Chat  (Ctrl+Alt+F)",
+                f"🎯  Locate Current Phrase in Chat  ({mod_lbl}+F)",
                 getattr(self, "locate_in_chat", lambda *a: None),
                 enabled=lambda it: is_speech_active() or len(self.output_history) > 0 or bool(self.last_spoken_summary),
             ),
-            item("📖  Read Highlighted Text  (Ctrl+Alt+R)", self.read_highlighted_text),
+            item(f"📖  Read Highlighted Text  ({mod_lbl}+R)", self.read_highlighted_text),
             item(lambda it: "🔼  Show Cockpit HUD" if getattr(self, "hud_collapsed", False) or not getattr(getattr(self, "hud", None), "visible", True) else "🔽  Collapse HUD to Tray", getattr(self, "toggle_hud_collapse", lambda: None), enabled=lambda it: getattr(self, "hud_enabled", True)),
             item("🖥️  Expand Winamp Reader HUD", getattr(self, "toggle_hud_expanded", lambda *a: None), checked=lambda it: getattr(getattr(self, "hud", None), "expanded", False), enabled=lambda it: getattr(self, "hud_enabled", True)),
             pystray.Menu.SEPARATOR,
@@ -3244,7 +3318,9 @@ class AntiTrayApp:
                                 if self.hud_enabled:
                                     self.hud.set_status("AudioMind • Speaking", state="speaking")
                                 speak("Caution verified. AudioMind is sending to chat.")
-                                if not self.submit_to_antigravity_chat(prompt_text):
+                                if getattr(self, "agent_backend", "antigravity") == "ollama":
+                                    self._submit_to_ollama(prompt_text)
+                                elif not self.submit_to_antigravity_chat(prompt_text):
                                     if getattr(self, "last_injection_error", None) != "Antigravity is running as administrator, so Anti can't type into it.":
                                         speak("I couldn't focus Antigravity, so nothing was typed.")
 
@@ -3254,7 +3330,9 @@ class AntiTrayApp:
                                 self.set_tray_state("processing", "AudioMind: Working in IDE...")
                                 if self.hud_enabled:
                                     self.hud.set_status("AudioMind • Sent", state="processing")
-                                if not self.submit_to_antigravity_chat(prompt_text):
+                                if getattr(self, "agent_backend", "antigravity") == "ollama":
+                                    self._submit_to_ollama(prompt_text)
+                                elif not self.submit_to_antigravity_chat(prompt_text):
                                     if getattr(self, "last_injection_error", None) != "Antigravity is running as administrator, so Anti can't type into it.":
                                         speak("I couldn't focus Antigravity, so nothing was typed.")
 
@@ -3400,13 +3478,18 @@ class AntiTrayApp:
                 try:
                     from pynput import keyboard
                     with keyboard.GlobalHotKeys({
+                        "<cmd>+<alt>+r": self.read_highlighted_text,
+                        "<cmd>+<alt>+m": lambda: self.toggle_mute(None, None),
+                        "<cmd>+<alt>+n": self.skip_current_output,
+                        "<cmd>+<alt>+p": self.go_back_output,
+                        "<cmd>+<alt>+f": self.locate_in_chat,
                         "<ctrl>+<alt>+r": self.read_highlighted_text,
                         "<ctrl>+<alt>+m": lambda: self.toggle_mute(None, None),
                         "<ctrl>+<alt>+n": self.skip_current_output,
                         "<ctrl>+<alt>+p": self.go_back_output,
                         "<ctrl>+<alt>+f": self.locate_in_chat,
                     }) as h:
-                        print("[*] macOS Global Hotkeys active (Ctrl+Opt+R/M/N/P/F).")
+                        print("[*] macOS Global Hotkeys active (Cmd+Opt / Ctrl+Opt + R/M/N/P/F).")
                         while self.running:
                             time.sleep(0.5)
                         h.stop()

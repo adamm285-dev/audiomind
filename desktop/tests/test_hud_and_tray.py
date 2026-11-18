@@ -2400,6 +2400,97 @@ def test_macos_portability_adapters(monkeypatch, tmp_path):
     assert pcm.shape == (480, 2) and pcm.dtype == np.float32
 
 
+def test_ollama_backend_adapter_and_mac_hotkey_labels(monkeypatch):
+    """Verify Ollama local LLM backend switching, response forwarding, and macOS Cmd+Opt tray labels."""
+    import io
+    import json
+    import sys
+    import time
+    import urllib.request
+    import pystray
+    import desktop.app as app_module
+
+    responses = []
+
+    class DummyApp:
+        def __init__(self):
+            self.agent_backend = "antigravity"
+            self._ollama_history = []
+            self._ollama_step = 0
+            self.hud_enabled = False
+            self.muted = True
+            self.auto_submit = True
+            self.auto_read = True
+            self.speech_speed = 1.0
+            self.remote_poll_enabled = False
+            self.speech_queue = []
+            self.output_history = []
+            self.last_spoken_summary = ""
+            self.hud = type("H", (), {"theme": "seiko", "position": "bottom_right", "expanded": False, "visible": False})()
+        def _on_assistant_response(self, text, filepath="", step_index=0):
+            responses.append((text, filepath, step_index))
+        def _get_tray_header_text(self, item=None):
+            return app_module.AntiTrayApp._get_tray_header_text(self, item)
+        def show_status_toast(self, *a, **k): pass
+        def toggle_auto_submit(self, *a, **k): pass
+        def toggle_auto_read(self, *a, **k): pass
+        def toggle_speech_pause(self, *a, **k): pass
+        def forward_speech_5(self, *a, **k): pass
+        def rewind_speech_5(self, *a, **k): pass
+        def skip_next_chapter(self, *a, **k): pass
+        def skip_current_output(self, *a, **k): pass
+        def repeat_curr_chapter(self, *a, **k): pass
+        def repeat_chapter(self, *a, **k): pass
+        def repeat_current_output(self, *a, **k): pass
+        def go_back_output(self, *a, **k): pass
+        def interrupt_speech(self, *a, **k): pass
+        def read_highlighted_text(self, *a, **k): pass
+        def set_voice_model(self, *a, **k): pass
+        def set_hud_theme(self, *a, **k): pass
+        def set_speech_speed(self, *a, **k): pass
+        def toggle_mute(self, *a, **k): pass
+        def toggle_hud(self, *a, **k): pass
+        def toggle_hud_dock(self, *a, **k): pass
+        def toggle_remote_listener(self, *a, **k): pass
+        def test_greeting(self, *a, **k): pass
+        def open_firewall_audit(self, *a, **k): pass
+        def exit_app(self, *a, **k): pass
+
+    def fake_urlopen(req_or_url, timeout=10):
+        url = req_or_url.full_url if hasattr(req_or_url, "full_url") else str(req_or_url)
+        if url.endswith("/api/tags"):
+            body = json.dumps({"models": [{"name": "gemma4:latest"}]}).encode("utf-8")
+        else:
+            body = json.dumps({"message": {"content": "Hello from local Ollama!"}}).encode("utf-8")
+        return io.BytesIO(body)
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    app = DummyApp()
+    app_module.AntiTrayApp.set_agent_backend(app, "ollama", "Ollama Local")
+    assert app.agent_backend == "ollama"
+
+    assert app_module.AntiTrayApp._submit_to_ollama(app, "Test prompt") is True
+    deadline = time.time() + 2.0
+    while not responses and time.time() < deadline:
+        time.sleep(0.02)
+    assert responses == [("Hello from local Ollama!", "ollama", 1)]
+
+    # Verify Cmd+Opt labels on macOS
+    monkeypatch.setattr(sys, "platform", "darwin")
+    assert "Cmd+Opt+M" in app._get_tray_header_text()
+    monkeypatch.setattr(
+        pystray,
+        "Icon",
+        lambda name, icon, title="", menu=None: type("I", (), {"name": name, "icon": icon, "title": title, "menu": menu})(),
+    )
+    app_module.AntiTrayApp._setup_tray(app)
+    get_text = lambda it: it.text(it) if callable(it.text) else str(it.text)
+    root_texts = [get_text(it) for it in app.tray_icon.menu.items if it != pystray.Menu.SEPARATOR]
+    assert any("Cmd+Opt+R" in t for t in root_texts)
+    assert any("Cmd+Opt+F" in t for t in root_texts)
+
+
+
 
 def test_player_locator_includes_context_and_duration():
     """Verify get_locator_at_sample returns context_before, context_after, and duration_seconds."""
