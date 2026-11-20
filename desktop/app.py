@@ -2643,13 +2643,28 @@ class AntiTrayApp:
 
     def exit_app(self, icon=None, item=None):
         self.running = False
-        if hasattr(self, "transcript_watcher") and self.transcript_watcher:
-            self.transcript_watcher.stop()
-        if self.hud:
-            self.hud.destroy()
-        if self.tray_icon:
-            self.tray_icon.stop()
-        sys.exit(0)
+        # Failsafe exit timer in case Tk/pystray teardown stalls on a hung thread
+        threading.Timer(0.5, lambda: os._exit(0)).start()
+        try:
+            stop_speech()
+        except Exception:
+            pass
+        try:
+            if hasattr(self, "transcript_watcher") and self.transcript_watcher:
+                self.transcript_watcher.stop()
+        except Exception:
+            pass
+        try:
+            if self.hud:
+                self.hud.destroy()
+        except Exception:
+            pass
+        try:
+            if self.tray_icon:
+                self.tray_icon.stop()
+        except Exception:
+            pass
+        os._exit(0)
 
     def capture_command_audio(
         self, 

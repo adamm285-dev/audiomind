@@ -2579,6 +2579,33 @@ def test_speech_queue_worker_survives_tray_icon_error(monkeypatch):
     assert spoken == ["First queued message", "Second queued message"]
 
 
+def test_hud_scale_defers_skin_cache_clear_to_tk_thread():
+    import threading
+    from unittest.mock import MagicMock
+    from desktop.ui.hud import WaveformHud
+
+    hud = WaveformHud.__new__(WaveformHud)
+    hud._lock = threading.Lock()
+    hud._skin_cache = {"cached_key": object()}
+    hud._skin_cache_dirty = False
+    hud._scale = 1.0
+    hud._skin_finish = "dark"
+    hud._expanded = False
+    hud.root = MagicMock()
+
+    hud.set_scale(1.5)
+    assert hud._skin_cache_dirty is True
+    assert "cached_key" in hud._skin_cache
+    hud.root.after.assert_called()
+
+    hud._skin_cache_dirty = False
+    hud.root.after.reset_mock()
+
+    hud.set_skin_finish("stainless")
+    assert hud._skin_cache_dirty is True
+    assert "cached_key" in hud._skin_cache
+
+
 
 
 

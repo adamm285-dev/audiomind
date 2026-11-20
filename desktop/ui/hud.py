@@ -154,6 +154,7 @@ class WaveformHud:
         self.expanded_width = 800
         self.expanded_height = 360
         self._skin_cache = {}
+        self._skin_cache_dirty = False
         self.live_phrase = ""
         self.live_context_before = ""
         self.live_context_after = ""
@@ -203,9 +204,12 @@ class WaveformHud:
         """Set uniform HUD scale factor (e.g. 0.75, 1.0, 1.25, 1.5) for both compact and expanded modes."""
         with self._lock:
             self.ui_scale = max(0.6, min(2.0, float(scale)))
-            self._skin_cache.clear()
+            self._skin_cache_dirty = True
         if self.root:
-            self.root.after(0, self._check_expansion)
+            try:
+                self.root.after(0, self._check_expansion)
+            except Exception:
+                pass
         else:
             self._check_expansion()
 
@@ -215,7 +219,7 @@ class WaveformHud:
             return
         with self._lock:
             self.skin_finish = finish
-            self._skin_cache.clear()
+            self._skin_cache_dirty = True
 
     def _skin_filename(self, kind: str) -> str:
         """Resolve skin PNG filename for 'expanded', 'mini', or 'pill' and active skin_finish."""
@@ -1268,6 +1272,10 @@ class WaveformHud:
         self.canvas.create_text((sp_x1 + sp_x2) / 2, sp_cy, text=f"⚡ SPEED  {spd_lbl}", fill=sp_txt, font=("Consolas", sf(14), "bold"))
 
     def _draw_frame(self):
+        if getattr(self, "_skin_cache_dirty", False):
+            # Clear PhotoImage cache strictly on the Tk thread to avoid Tcl cross-thread deadlocks
+            self._skin_cache.clear()
+            self._skin_cache_dirty = False
         self.canvas.delete("all")
         w = self.width
         h = self.height
@@ -1470,6 +1478,10 @@ class WaveformHud:
             self.canvas.create_line(58 * s, h - 4 * s, (58 + 364 * prog) * s, h - 4 * s, fill=glow_color, width=max(1, int(2 * s)))
 
     def _draw_frame(self):
+        if getattr(self, "_skin_cache_dirty", False):
+            # Clear PhotoImage cache strictly on the Tk thread to avoid Tcl cross-thread deadlocks
+            self._skin_cache.clear()
+            self._skin_cache_dirty = False
         self.canvas.delete("all")
         w = self.width
         h = self.height
