@@ -2757,6 +2757,72 @@ def test_toggle_skip_subagent_reports_syncs_watcher():
     assert app.transcript_watcher.skip_subagent_reports is True
 
 
+def test_parse_steelseries_anc_button_packet():
+    from desktop.audio.headset_button import parse_steelseries_anc_button_packet
+
+    anc_on = bytes.fromhex("07 bd 02" + " 00" * 61)
+    anc_off = bytes.fromhex("07 bd 00" + " 00" * 61)
+    vol_wheel = bytes.fromhex("07 25 28" + " 00" * 61)
+    bt_media = bytes.fromhex("07 bb 01" + " 00" * 61)
+
+    assert parse_steelseries_anc_button_packet(anc_on) == 2
+    assert parse_steelseries_anc_button_packet(anc_off) == 0
+    assert parse_steelseries_anc_button_packet(vol_wheel) is None
+    assert parse_steelseries_anc_button_packet(bt_media) is None
+    assert parse_steelseries_anc_button_packet(b"\x07\xbd") is None
+
+
+def test_headset_button_listener_triggers_and_debounces():
+    from desktop.audio.headset_button import HeadsetButtonListener
+
+    toggles = []
+    listener = HeadsetButtonListener(on_toggle_pause=lambda: toggles.append("toggle"), debounce_sec=0.35)
+
+    anc_on = bytes.fromhex("07 bd 02" + " 00" * 61)
+    anc_off = bytes.fromhex("07 bd 00" + " 00" * 61)
+    vol_wheel = bytes.fromhex("07 25 28" + " 00" * 61)
+
+    assert listener.handle_packet(vol_wheel, now=1.0) is False
+    assert listener.handle_packet(anc_on, now=1.0) is True
+    # Duplicate same-state packet ignored
+    assert listener.handle_packet(anc_on, now=2.0) is False
+    # Within debounce window ignored
+    assert listener.handle_packet(anc_off, now=1.1) is False
+    # Valid transition after debounce triggers pause/resume
+    assert listener.handle_packet(anc_off, now=1.5) is True
+    assert listener.handle_packet(anc_on, now=2.0) is True
+    assert len(toggles) == 3
+
+
+def test_toggle_headset_button_controls_listener():
+    import desktop.app as app_module
+
+    class _DummyListener:
+        def __init__(self):
+            self.started = 0
+            self.stopped = 0
+
+        def start(self):
+            self.started += 1
+            return True
+
+        def stop(self):
+            self.stopped += 1
+
+    app = app_module.AntiTrayApp.__new__(app_module.AntiTrayApp)
+    app.headset_button_enabled = True
+    app.headset_button_listener = _DummyListener()
+    app.hud_enabled = False
+
+    app.toggle_headset_button()
+    assert app.headset_button_enabled is False
+    assert app.headset_button_listener.stopped == 1
+
+    app.toggle_headset_button()
+    assert app.headset_button_enabled is True
+    assert app.headset_button_listener.started == 1
+
+
 
 
 

@@ -227,6 +227,14 @@ except ImportError:
         truncate_for_audio_summary = lambda t, max_words=3500: t
 
 try:
+    from desktop.audio.headset_button import HeadsetButtonListener
+except ImportError:
+    try:
+        from audio.headset_button import HeadsetButtonListener
+    except ImportError:
+        HeadsetButtonListener = None
+
+try:
     import openwakeword
     from openwakeword.model import Model
 except ImportError:
@@ -1000,6 +1008,7 @@ class AntiTrayApp:
         self.auto_read = True
         self.skip_verification_report = True
         self.skip_subagent_reports = True
+        self.headset_button_enabled = True
         self.launch_on_startup = is_windows_startup_enabled()
         self.last_raw_response = ""
         self.last_spoken_summary = ""
@@ -1080,6 +1089,11 @@ class AntiTrayApp:
             on_user_input=self._on_user_input,
             skip_verification_report=False,
             skip_subagent_reports=self.skip_subagent_reports,
+        )
+        self.headset_button_listener = (
+            HeadsetButtonListener(on_toggle_pause=self.toggle_pause_speech)
+            if HeadsetButtonListener
+            else None
         )
 
         # Wire speech player state changes to tray and HUD
@@ -1363,6 +1377,26 @@ class AntiTrayApp:
                 if hasattr(self, "_hide_hud_after_delay"):
                     threading.Thread(target=self._hide_hud_after_delay, args=(1.6,), daemon=True).start()
 
+    def toggle_headset_button(self, _icon=None, _item=None):
+        """Toggle SteelSeries headset ANC button hardware pause/resume binding."""
+        self.headset_button_enabled = not getattr(self, "headset_button_enabled", True)
+        listener = getattr(self, "headset_button_listener", None)
+        if listener is not None:
+            if self.headset_button_enabled:
+                listener.start()
+            else:
+                listener.stop()
+        status_label = "ON" if self.headset_button_enabled else "OFF"
+        print(f"[*] Headset ANC Button Pause/Resume: {status_label}")
+        if getattr(self, "hud_enabled", False) and hasattr(self, "hud"):
+            toast = "🎧  Headset Pause Button: ON" if self.headset_button_enabled else "🎧  Headset Pause Button: OFF"
+            if hasattr(self.hud, "flash_action"):
+                self.hud.flash_action(toast, duration_sec=1.6)
+            if not is_speech_active():
+                self.hud.show(state="listening" if not getattr(self, "muted", False) else "muted", status=toast)
+                if hasattr(self, "_hide_hud_after_delay"):
+                    threading.Thread(target=self._hide_hud_after_delay, args=(1.6,), daemon=True).start()
+
     def toggle_launch_on_startup(self, _icon=None, _item=None):
         """Toggle launching AudioMind automatically when Windows starts."""
         target = not getattr(self, "launch_on_startup", is_windows_startup_enabled())
@@ -1595,6 +1629,11 @@ class AntiTrayApp:
                 "🤖  Skip Subagent Reports",
                 getattr(self, "toggle_skip_subagent_reports", lambda *a: None),
                 checked=lambda it: getattr(self, "skip_subagent_reports", True),
+            ),
+            item(
+                "🎧  Headset ANC Button Pause/Resume",
+                getattr(self, "toggle_headset_button", lambda *a: None),
+                checked=lambda it: getattr(self, "headset_button_enabled", True),
             ),
             item(f"🔇  Mute Microphone  ({mod_lbl}+M)", self.toggle_mute, checked=lambda item: self.muted),
             item("🌊  Desktop Waveform HUD", self.toggle_hud, checked=lambda item: self.hud_enabled),
@@ -2678,6 +2717,11 @@ class AntiTrayApp:
         except Exception:
             pass
         try:
+            if hasattr(self, "headset_button_listener") and self.headset_button_listener:
+                self.headset_button_listener.stop()
+        except Exception:
+            pass
+        try:
             if self.hud:
                 self.hud.destroy()
         except Exception:
@@ -3650,6 +3694,10 @@ class AntiTrayApp:
         # Start transcript watcher for assistant read-aloud
         self.transcript_watcher.start()
         print(f"[*] Transcript Watcher active across {len(self.transcript_watcher.tracked_files)} conversations")
+
+        # Start SteelSeries USB HID headset button listener if enabled
+        if getattr(self, "headset_button_enabled", True) and getattr(self, "headset_button_listener", None):
+            self.headset_button_listener.start()
 
         # Launch pulse worker for active tray animation
         self._pulse_thread = threading.Thread(target=self._pulse_worker, daemon=True)
