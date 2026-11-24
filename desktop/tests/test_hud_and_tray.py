@@ -2779,7 +2779,6 @@ def test_headset_button_listener_triggers_and_debounces():
     listener = HeadsetButtonListener(
         on_toggle_pause=lambda: toggles.append("toggle"),
         debounce_sec=0.35,
-        force_anc_on=False,
     )
 
     anc_on = bytes.fromhex("07 bd 02" + " 00" * 61)
@@ -2866,33 +2865,6 @@ def test_trigger_voice_command_sets_manual_event():
     assert app._manual_voice_trigger.is_set() is True
     assert hasattr(app_module.AntiTrayApp, "toggle_speech_pause")
     assert hasattr(app_module.AntiTrayApp, "trigger_voice_command")
-
-
-def test_headset_button_force_anc_on_ignores_restore_echo():
-    import time
-    from desktop.audio.headset_button import HeadsetButtonListener
-
-    events = []
-    restores = []
-    listener = HeadsetButtonListener(
-        on_toggle_pause=lambda: events.append("pause"),
-        on_double_press=lambda: events.append("record"),
-        debounce_sec=0.05,
-        double_press_window_sec=0.15,
-        force_anc_on=True,
-    )
-    listener._restore_anc_on = lambda: restores.append("restore")
-
-    anc_off = bytes.fromhex("07 bd 00" + " 00" * 61)
-    anc_on = bytes.fromhex("07 bd 02" + " 00" * 61)
-
-    # Pressing ANC OFF triggers restore write, and the immediate 07 bd 02 echo is NOT treated as a double-press
-    listener.handle_packet(anc_off, now=1.0)
-    listener.handle_packet(anc_on, now=1.1)
-    time.sleep(0.20)
-    assert restores == ["restore"]
-    assert events == ["pause"]
-    listener.stop()
 
 
 

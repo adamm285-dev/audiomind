@@ -37,19 +37,16 @@ class HeadsetButtonListener:
         on_double_press: Optional[Callable[[], None]] = None,
         debounce_sec: float = 0.08,
         double_press_window_sec: float = 0.95,
-        force_anc_on: bool = True,
     ):
         self.on_toggle_pause = on_toggle_pause
         self.on_double_press = on_double_press
         self.debounce_sec = debounce_sec
         self.double_press_window_sec = double_press_window_sec
-        self.force_anc_on = force_anc_on
         self.running = False
         self._thread: Optional[threading.Thread] = None
         self._handle = None
         self._last_trigger_time: float = 0.0
         self._last_anc_state: Optional[int] = None
-        self._suppress_anc_on_until: float = 0.0
         self._timer_lock = threading.Lock()
         self._pending_single_timer: Optional[threading.Timer] = None
 
@@ -69,20 +66,6 @@ class HeadsetButtonListener:
         except Exception as exc:
             print(f"[!] Headset double-press callback error: {exc}")
 
-    def _restore_anc_on(self):
-        """Write SteelSeries HID report 0x07 0xBD 0x02 to keep ANC enabled."""
-        if sys.platform != "win32" or self._handle is None:
-            return
-        try:
-            from ctypes import wintypes
-
-            k32 = ctypes.windll.kernel32
-            buf = (ctypes.c_ubyte * 64)(0x07, 0xBD, 0x02)
-            written = wintypes.DWORD(0)
-            k32.WriteFile(self._handle, buf, 64, ctypes.byref(written), None)
-        except Exception:
-            pass
-
     def handle_packet(self, data: bytes, now: Optional[float] = None) -> bool:
         """Process one raw 64-byte HID report; return True if a button action was scheduled/triggered."""
         anc_state = parse_steelseries_anc_button_packet(data)
@@ -90,9 +73,6 @@ class HeadsetButtonListener:
             return False
 
         ts = time.monotonic() if now is None else now
-        if anc_state == 0x02 and ts < self._suppress_anc_on_until:
-            self._last_anc_state = anc_state
-            return False
         if self._last_anc_state is not None and anc_state == self._last_anc_state:
             return False
         if (ts - self._last_trigger_time) < self.debounce_sec:
@@ -100,10 +80,6 @@ class HeadsetButtonListener:
 
         self._last_anc_state = anc_state
         self._last_trigger_time = ts
-
-        if self.force_anc_on and anc_state != 0x02:
-            self._suppress_anc_on_until = ts + 0.80
-            self._restore_anc_on()
 
         if self.on_double_press is None:
             self._fire_single_press()
@@ -248,7 +224,6 @@ class HeadsetButtonListener:
 
         kernel32 = ctypes.windll.kernel32
         GENERIC_READ = 0x80000000
-        GENERIC_WRITE = 0x40000000
         FILE_SHARE_READ = 0x00000001
         FILE_SHARE_WRITE = 0x00000002
         OPEN_EXISTING = 3
@@ -263,10 +238,6 @@ class HeadsetButtonListener:
             wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD,
             ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p,
         ]
-        kernel32.WriteFile.argtypes = [
-            wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD,
-            ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p,
-        ]
 
         while self.running:
             found = self._find_dac_hid_path()
@@ -275,16 +246,10 @@ class HeadsetButtonListener:
                 continue
 
             path, in_len = found
-            desired_access = (GENERIC_READ | GENERIC_WRITE) if self.force_anc_on else GENERIC_READ
             h = kernel32.CreateFileW(
-                path, desired_access, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
                 None, OPEN_EXISTING, 0, None,
             )
-            if h == INVALID_HANDLE_VALUE and desired_access != GENERIC_READ:
-                h = kernel32.CreateFileW(
-                    path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
-                    None, OPEN_EXISTING, 0, None,
-                )
             if h == INVALID_HANDLE_VALUE:
                 time.sleep(3.0)
                 continue
