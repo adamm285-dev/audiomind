@@ -1009,6 +1009,7 @@ class AntiTrayApp:
         self.skip_verification_report = True
         self.skip_subagent_reports = True
         self.headset_button_enabled = True
+        self._manual_voice_trigger = threading.Event()
         self.launch_on_startup = is_windows_startup_enabled()
         self.last_raw_response = ""
         self.last_spoken_summary = ""
@@ -1091,7 +1092,10 @@ class AntiTrayApp:
             skip_subagent_reports=self.skip_subagent_reports,
         )
         self.headset_button_listener = (
-            HeadsetButtonListener(on_toggle_pause=self.toggle_pause_speech)
+            HeadsetButtonListener(
+                on_toggle_pause=self.toggle_pause_speech,
+                on_double_press=self.trigger_voice_command,
+            )
             if HeadsetButtonListener
             else None
         )
@@ -1376,6 +1380,12 @@ class AntiTrayApp:
                 self.hud.show(state="listening" if not getattr(self, "muted", False) else "muted", status=toast)
                 if hasattr(self, "_hide_hud_after_delay"):
                     threading.Thread(target=self._hide_hud_after_delay, args=(1.6,), daemon=True).start()
+
+    def trigger_voice_command(self, _icon=None, _item=None):
+        """Manually trigger voice command capture (bypassing wake word, e.g., headset double-press)."""
+        if not hasattr(self, "_manual_voice_trigger") or self._manual_voice_trigger is None:
+            self._manual_voice_trigger = threading.Event()
+        self._manual_voice_trigger.set()
 
     def toggle_headset_button(self, _icon=None, _item=None):
         """Toggle SteelSeries headset ANC button hardware pause/resume binding."""
@@ -3199,7 +3209,13 @@ class AntiTrayApp:
                         else:
                             consecutive_hits = 0
 
-                        if consecutive_hits >= patience_req:
+                        manual_triggered = (
+                            getattr(self, "_manual_voice_trigger", None) is not None
+                            and self._manual_voice_trigger.is_set()
+                        )
+                        if manual_triggered or consecutive_hits >= patience_req:
+                            if manual_triggered:
+                                self._manual_voice_trigger.clear()
                             consecutive_hits = 0
                             self.model.reset()  # Reset rolling spectrogram buffer immediately upon trigger
                             
@@ -3210,7 +3226,10 @@ class AntiTrayApp:
                             if was_audibly_speaking:
                                 pause_speech()
 
-                            print(f"\n[⚡ TRIGGER] 'Hey Anti' recognized! Score: {score:.3f}")
+                            if manual_triggered:
+                                print("\n[⚡ TRIGGER] Headset double-press! Listening for your command...")
+                            else:
+                                print(f"\n[⚡ TRIGGER] 'Hey Anti' recognized! Score: {score:.3f}")
                             # Update Tray & HUD
                             self.set_tray_state("user_speaking", "AudioMind: Listening for your command...")
                             if self.hud_enabled:

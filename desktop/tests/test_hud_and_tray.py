@@ -2823,6 +2823,45 @@ def test_toggle_headset_button_controls_listener():
     assert app.headset_button_listener.started == 1
 
 
+def test_headset_button_double_press_triggers_record_without_pause():
+    import time
+    from desktop.audio.headset_button import HeadsetButtonListener
+
+    events = []
+    listener = HeadsetButtonListener(
+        on_toggle_pause=lambda: events.append("pause"),
+        on_double_press=lambda: events.append("record"),
+        debounce_sec=0.05,
+        double_press_window_sec=0.15,
+    )
+
+    anc_on = bytes.fromhex("07 bd 02" + " 00" * 61)
+    anc_off = bytes.fromhex("07 bd 00" + " 00" * 61)
+
+    # Double-press (two transitions within double_press_window_sec) -> fires record, not pause
+    listener.handle_packet(anc_on, now=1.0)
+    listener.handle_packet(anc_off, now=1.1)
+    time.sleep(0.20)
+    assert events == ["record"]
+
+    # Single press -> waits window then fires pause
+    listener.handle_packet(anc_on, now=2.0)
+    time.sleep(0.20)
+    assert events == ["record", "pause"]
+    listener.stop()
+
+
+def test_trigger_voice_command_sets_manual_event():
+    import threading
+    import desktop.app as app_module
+
+    app = app_module.AntiTrayApp.__new__(app_module.AntiTrayApp)
+    app._manual_voice_trigger = threading.Event()
+    assert app._manual_voice_trigger.is_set() is False
+    app.trigger_voice_command()
+    assert app._manual_voice_trigger.is_set() is True
+
+
 
 
 

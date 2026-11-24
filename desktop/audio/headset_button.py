@@ -34,18 +34,40 @@ class HeadsetButtonListener:
     def __init__(
         self,
         on_toggle_pause: Callable[[], None],
-        debounce_sec: float = 0.35,
+        on_double_press: Optional[Callable[[], None]] = None,
+        debounce_sec: float = 0.08,
+        double_press_window_sec: float = 0.45,
     ):
         self.on_toggle_pause = on_toggle_pause
+        self.on_double_press = on_double_press
         self.debounce_sec = debounce_sec
+        self.double_press_window_sec = double_press_window_sec
         self.running = False
         self._thread: Optional[threading.Thread] = None
         self._handle = None
         self._last_trigger_time: float = 0.0
         self._last_anc_state: Optional[int] = None
+        self._timer_lock = threading.Lock()
+        self._pending_single_timer: Optional[threading.Timer] = None
+
+    def _fire_single_press(self):
+        with self._timer_lock:
+            self._pending_single_timer = None
+        try:
+            self.on_toggle_pause()
+        except Exception as exc:
+            print(f"[!] Headset button callback error: {exc}")
+
+    def _fire_double_press(self):
+        if self.on_double_press is None:
+            return
+        try:
+            self.on_double_press()
+        except Exception as exc:
+            print(f"[!] Headset double-press callback error: {exc}")
 
     def handle_packet(self, data: bytes, now: Optional[float] = None) -> bool:
-        """Process one raw 64-byte HID report; return True if pause toggle was triggered."""
+        """Process one raw 64-byte HID report; return True if a button action was scheduled/triggered."""
         anc_state = parse_steelseries_anc_button_packet(data)
         if anc_state is None:
             return False
@@ -58,10 +80,25 @@ class HeadsetButtonListener:
 
         self._last_anc_state = anc_state
         self._last_trigger_time = ts
-        try:
-            self.on_toggle_pause()
-        except Exception as exc:
-            print(f"[!] Headset button callback error: {exc}")
+
+        if self.on_double_press is None:
+            self._fire_single_press()
+            return True
+
+        trigger_double = False
+        with self._timer_lock:
+            if self._pending_single_timer is not None:
+                self._pending_single_timer.cancel()
+                self._pending_single_timer = None
+                trigger_double = True
+            else:
+                timer = threading.Timer(self.double_press_window_sec, self._fire_single_press)
+                timer.daemon = True
+                self._pending_single_timer = timer
+                timer.start()
+
+        if trigger_double:
+            self._fire_double_press()
         return True
 
     def start(self) -> bool:
@@ -78,6 +115,10 @@ class HeadsetButtonListener:
     def stop(self):
         """Stop the HID reader thread and close any open device handle."""
         self.running = False
+        with self._timer_lock:
+            if self._pending_single_timer is not None:
+                self._pending_single_timer.cancel()
+                self._pending_single_timer = None
         if sys.platform == "win32" and self._handle is not None:
             try:
                 ctypes.windll.kernel32.CancelIoEx(self._handle, None)
