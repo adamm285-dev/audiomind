@@ -2860,6 +2860,8 @@ def test_trigger_voice_command_sets_manual_event():
     assert app._manual_voice_trigger.is_set() is False
     app.trigger_voice_command()
     assert app._manual_voice_trigger.is_set() is True
+    assert hasattr(app_module.AntiTrayApp, "toggle_speech_pause")
+    assert hasattr(app_module.AntiTrayApp, "trigger_voice_command")
 
 
 

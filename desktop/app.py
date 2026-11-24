@@ -1093,7 +1093,7 @@ class AntiTrayApp:
         )
         self.headset_button_listener = (
             HeadsetButtonListener(
-                on_toggle_pause=self.toggle_pause_speech,
+                on_toggle_pause=self.toggle_speech_pause,
                 on_double_press=self.trigger_voice_command,
             )
             if HeadsetButtonListener
