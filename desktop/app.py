@@ -999,6 +999,7 @@ class AntiTrayApp:
         self.auto_submit = True
         self.auto_read = True
         self.skip_verification_report = True
+        self.skip_subagent_reports = True
         self.launch_on_startup = is_windows_startup_enabled()
         self.last_raw_response = ""
         self.last_spoken_summary = ""
@@ -1078,6 +1079,7 @@ class AntiTrayApp:
             on_new_response=self._on_assistant_response,
             on_user_input=self._on_user_input,
             skip_verification_report=False,
+            skip_subagent_reports=self.skip_subagent_reports,
         )
 
         # Wire speech player state changes to tray and HUD
@@ -1345,6 +1347,22 @@ class AntiTrayApp:
                 if hasattr(self, "_hide_hud_after_delay"):
                     threading.Thread(target=self._hide_hud_after_delay, args=(1.6,), daemon=True).start()
 
+    def toggle_skip_subagent_reports(self, _icon=None, _item=None):
+        """Toggle skipping subagent handoff/media-delivery reports during automatic read-aloud."""
+        self.skip_subagent_reports = not getattr(self, "skip_subagent_reports", True)
+        if getattr(self, "transcript_watcher", None) is not None:
+            self.transcript_watcher.skip_subagent_reports = self.skip_subagent_reports
+        status_label = "ON" if self.skip_subagent_reports else "OFF"
+        print(f"[*] Skip Subagent Reports: {status_label}")
+        if getattr(self, "hud_enabled", False) and hasattr(self, "hud"):
+            toast = "🤖  Skip Subagent Reports: ON" if self.skip_subagent_reports else "🤖  Skip Subagent Reports: OFF"
+            if hasattr(self.hud, "flash_action"):
+                self.hud.flash_action(toast, duration_sec=1.6)
+            if not is_speech_active():
+                self.hud.show(state="listening" if not getattr(self, "muted", False) else "muted", status=toast)
+                if hasattr(self, "_hide_hud_after_delay"):
+                    threading.Thread(target=self._hide_hud_after_delay, args=(1.6,), daemon=True).start()
+
     def toggle_launch_on_startup(self, _icon=None, _item=None):
         """Toggle launching AudioMind automatically when Windows starts."""
         target = not getattr(self, "launch_on_startup", is_windows_startup_enabled())
@@ -1572,6 +1590,11 @@ class AntiTrayApp:
                 "⏭️  Skip Verification Reports",
                 getattr(self, "toggle_skip_verification_report", lambda *a: None),
                 checked=lambda it: getattr(self, "skip_verification_report", True),
+            ),
+            item(
+                "🤖  Skip Subagent Reports",
+                getattr(self, "toggle_skip_subagent_reports", lambda *a: None),
+                checked=lambda it: getattr(self, "skip_subagent_reports", True),
             ),
             item(f"🔇  Mute Microphone  ({mod_lbl}+M)", self.toggle_mute, checked=lambda item: self.muted),
             item("🌊  Desktop Waveform HUD", self.toggle_hud, checked=lambda item: self.hud_enabled),

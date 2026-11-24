@@ -2633,6 +2633,130 @@ def test_player_locator_includes_context_and_duration():
     assert info["duration_seconds"] == 2.0
 
 
+def test_is_subagent_handoff_report():
+    from desktop.audio.read_aloud import is_subagent_handoff_report
+
+    # Main conversation is never suppressed even if it mentions images/videos/send_message
+    assert is_subagent_handoff_report(
+        "Image generated and delivered via send_message to caller.",
+        is_subagent_transcript=False,
+        used_send_message=True,
+    ) is False
+
+    # Subagent that used send_message is suppressed
+    assert is_subagent_handoff_report(
+        "Completed the task.",
+        is_subagent_transcript=True,
+        used_send_message=True,
+    ) is True
+
+    # Subagent media/caller handoff text is suppressed even without tool_calls flag
+    assert is_subagent_handoff_report(
+        "Image generated and sent to parent agent: C:\\tmp\\render.png",
+        is_subagent_transcript=True,
+        used_send_message=False,
+    ) is True
+    assert is_subagent_handoff_report(
+        "Sent the final video clip to the caller.",
+        is_subagent_transcript=True,
+        used_send_message=False,
+    ) is True
+
+    # Non-handoff subagent text without send_message is not suppressed
+    assert is_subagent_handoff_report(
+        "Found three matching files in the workspace.",
+        is_subagent_transcript=True,
+        used_send_message=False,
+    ) is False
+
+
+def test_transcript_watcher_skips_subagent_handoff_reports(tmp_path):
+    import json
+    import time
+    from desktop.audio.read_aloud import TranscriptWatcher
+
+    sub_dir = tmp_path / "sub-1" / ".system_generated" / "logs"
+    sub_dir.mkdir(parents=True)
+    sub_file = sub_dir / "transcript.jsonl"
+    sub_file.write_text(
+        json.dumps({"step_index": 0, "source": "SYSTEM", "type": "SYSTEM_MESSAGE", "status": "DONE", "content": "Subagent task"}) + "\n",
+        encoding="utf-8",
+    )
+
+    main_dir = tmp_path / "main-1" / ".system_generated" / "logs"
+    main_dir.mkdir(parents=True)
+    main_file = main_dir / "transcript.jsonl"
+    main_file.write_text(
+        json.dumps({"step_index": 0, "source": "USER_EXPLICIT", "type": "USER_INPUT", "status": "DONE", "content": "Make a video"}) + "\n",
+        encoding="utf-8",
+    )
+
+    received = []
+    watcher = TranscriptWatcher(
+        on_new_response=lambda text, fp, idx: received.append((text, fp, idx)),
+        skip_subagent_reports=True,
+    )
+    watcher.get_candidate_transcripts = lambda: [str(sub_file), str(main_file)]
+    watcher.start()
+    try:
+        with open(sub_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "step_index": 1,
+                "source": "MODEL",
+                "type": "PLANNER_RESPONSE",
+                "status": "DONE",
+                "tool_calls": [{"name": "send_message"}],
+                "content": "",
+            }) + "\n")
+            f.write(json.dumps({
+                "step_index": 2,
+                "source": "MODEL",
+                "type": "PLANNER_RESPONSE",
+                "status": "DONE",
+                "tool_calls": [],
+                "content": "Image generated and delivered via `send_message` to `main-1`.",
+            }) + "\n")
+        with open(main_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "step_index": 1,
+                "source": "MODEL",
+                "type": "PLANNER_RESPONSE",
+                "status": "DONE",
+                "tool_calls": [],
+                "content": "I finished generating your image and video.",
+            }) + "\n")
+
+        deadline = time.time() + 3.0
+        while time.time() < deadline and len(received) < 1:
+            time.sleep(0.05)
+        time.sleep(0.2)
+    finally:
+        watcher.stop()
+
+    assert [r[0] for r in received] == ["I finished generating your image and video."]
+
+
+def test_toggle_skip_subagent_reports_syncs_watcher():
+    import desktop.app as app_module
+
+    class _DummyWatcher:
+        def __init__(self):
+            self.skip_subagent_reports = True
+
+    app = app_module.AntiTrayApp.__new__(app_module.AntiTrayApp)
+    app.skip_subagent_reports = True
+    app.transcript_watcher = _DummyWatcher()
+    app.hud_enabled = False
+
+    app.toggle_skip_subagent_reports()
+    assert app.skip_subagent_reports is False
+    assert app.transcript_watcher.skip_subagent_reports is False
+
+    app.toggle_skip_subagent_reports()
+    assert app.skip_subagent_reports is True
+    assert app.transcript_watcher.skip_subagent_reports is True
+
+
 
 
 

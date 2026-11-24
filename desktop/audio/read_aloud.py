@@ -843,6 +843,35 @@ def capture_highlighted_text(target_hwnd: Optional[int] = None) -> Optional[str]
 
     return None
 
+_SUBAGENT_DELIVERY_RE = re.compile(
+    r"\b(?:sent|sending|delivered|delivering|reported|reporting|returned|returning|saved|generated|handoff)\b",
+    re.IGNORECASE,
+)
+_SUBAGENT_TARGET_OR_MEDIA_RE = re.compile(
+    r"(?:\b(?:caller|parent\s+agent|main\s+agent|send_message|image|photo|picture|video|clip|frame|screenshot)\b"
+    r"|\.(?:png|jpe?g|webp|gif|mp4|mov|webm|mkv)\b)",
+    re.IGNORECASE,
+)
+
+
+def is_subagent_handoff_report(
+    text: str,
+    is_subagent_transcript: bool = False,
+    used_send_message: bool = False,
+) -> bool:
+    """Return True when a subagent transcript emits an internal handoff or media delivery report.
+
+    Main-agent conversations (where the user interacted directly) are never suppressed.
+    """
+    if not is_subagent_transcript:
+        return False
+    if used_send_message:
+        return True
+    if not text:
+        return False
+    return bool(_SUBAGENT_DELIVERY_RE.search(text) and _SUBAGENT_TARGET_OR_MEDIA_RE.search(text))
+
+
 class TranscriptWatcher:
     """
     Watches all active Antigravity session transcripts concurrently.
@@ -855,12 +884,14 @@ class TranscriptWatcher:
         on_new_response: Callable[..., None],
         on_user_input: Optional[Callable[[str, str, int], None]] = None,
         skip_verification_report: bool = True,
+        skip_subagent_reports: bool = True,
     ):
         self.on_new_response = on_new_response
         self.on_user_input = on_user_input
         self.skip_verification_report = skip_verification_report
+        self.skip_subagent_reports = skip_subagent_reports
         self.running = False
-        # Map of file_path -> {"last_file_size": int, "last_step_index": int}
+        # Map of file_path -> {"last_file_size": int, "last_step_index": int, "has_user_input": bool, "has_send_message": bool}
         self.tracked_files: dict[str, dict] = {}
         self._thread: Optional[threading.Thread] = None
 
@@ -878,7 +909,12 @@ class TranscriptWatcher:
 
     def _sync_file_to_end(self, filepath: str) -> dict:
         """On initial discovery, scan to the end of the transcript to avoid replaying old history."""
-        state = {"last_file_size": 0, "last_step_index": 0}
+        state = {
+            "last_file_size": 0,
+            "last_step_index": 0,
+            "has_user_input": False,
+            "has_send_message": False,
+        }
         if not os.path.exists(filepath):
             return state
 
@@ -891,6 +927,11 @@ class TranscriptWatcher:
                         idx = d.get("step_index", 0)
                         if idx > state["last_step_index"]:
                             state["last_step_index"] = idx
+                        if d.get("source") in ("USER_EXPLICIT", "USER") and d.get("type") == "USER_INPUT":
+                            state["has_user_input"] = True
+                        for tc in d.get("tool_calls", []) or []:
+                            if tc.get("name") == "send_message":
+                                state["has_send_message"] = True
                     except Exception:
                         pass
         except Exception:
@@ -943,9 +984,14 @@ class TranscriptWatcher:
                                 continue
                             state["last_step_index"] = idx
 
+                            for tc in entry.get("tool_calls", []) or []:
+                                if tc.get("name") == "send_message":
+                                    state["has_send_message"] = True
+
                             # Detect user prompt submission turn
                             is_user = entry.get("source") in ("USER_EXPLICIT", "USER") and entry.get("type") == "USER_INPUT"
                             if is_user:
+                                state["has_user_input"] = True
                                 user_text = entry.get("content", "").strip()
                                 if user_text and self.on_user_input:
                                     try:
@@ -967,6 +1013,13 @@ class TranscriptWatcher:
                                     full_content = get_full_content(filepath, idx)
                                     if full_content:
                                         content = full_content
+                                if self.skip_subagent_reports and is_subagent_handoff_report(
+                                    content,
+                                    is_subagent_transcript=not state.get("has_user_input", False),
+                                    used_send_message=state.get("has_send_message", False),
+                                ):
+                                    print(f"[🔕 SUBAGENT HANDOFF SKIPPED]: {os.path.basename(os.path.dirname(os.path.dirname(os.path.dirname(filepath))))}")
+                                    continue
                                 speech_ready = content
                                 if self.skip_verification_report:
                                     speech_ready = filter_verification_report_for_speech(speech_ready)
