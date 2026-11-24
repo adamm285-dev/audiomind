@@ -1093,7 +1093,7 @@ class AntiTrayApp:
         )
         self.headset_button_listener = (
             HeadsetButtonListener(
-                on_toggle_pause=self.toggle_speech_pause,
+                on_toggle_pause=self.handle_headset_single_press,
                 on_double_press=self.trigger_voice_command,
             )
             if HeadsetButtonListener
@@ -1380,6 +1380,14 @@ class AntiTrayApp:
                 self.hud.show(state="listening" if not getattr(self, "muted", False) else "muted", status=toast)
                 if hasattr(self, "_hide_hud_after_delay"):
                     threading.Thread(target=self._hide_hud_after_delay, args=(1.6,), daemon=True).start()
+
+    def handle_headset_single_press(self):
+        """Headset single-press: pause/resume when speech is active, otherwise read highlighted text."""
+        if is_speech_active() or is_paused():
+            self.toggle_speech_pause()
+        else:
+            print("[🎧 HEADSET BUTTON]: Idle -> Reading highlighted text.")
+            self.read_highlighted_text()
 
     def trigger_voice_command(self, _icon=None, _item=None):
         """Manually trigger voice command capture (bypassing wake word, e.g., headset double-press)."""

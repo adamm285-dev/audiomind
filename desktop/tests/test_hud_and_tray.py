@@ -2865,6 +2865,33 @@ def test_trigger_voice_command_sets_manual_event():
     assert app._manual_voice_trigger.is_set() is True
     assert hasattr(app_module.AntiTrayApp, "toggle_speech_pause")
     assert hasattr(app_module.AntiTrayApp, "trigger_voice_command")
+    assert hasattr(app_module.AntiTrayApp, "handle_headset_single_press")
+
+
+def test_handle_headset_single_press_branches(monkeypatch):
+    import desktop.app as app_module
+
+    calls = []
+    app = app_module.AntiTrayApp.__new__(app_module.AntiTrayApp)
+    app.toggle_speech_pause = lambda: calls.append("pause_toggle")
+    app.read_highlighted_text = lambda: calls.append("read_highlight")
+
+    # Active speech -> pause/resume
+    monkeypatch.setattr(app_module, "is_speech_active", lambda: True)
+    monkeypatch.setattr(app_module, "is_paused", lambda: False)
+    app.handle_headset_single_press()
+
+    # Paused speech -> resume
+    monkeypatch.setattr(app_module, "is_speech_active", lambda: False)
+    monkeypatch.setattr(app_module, "is_paused", lambda: True)
+    app.handle_headset_single_press()
+
+    # Idle -> read highlighted text
+    monkeypatch.setattr(app_module, "is_speech_active", lambda: False)
+    monkeypatch.setattr(app_module, "is_paused", lambda: False)
+    app.handle_headset_single_press()
+
+    assert calls == ["pause_toggle", "pause_toggle", "read_highlight"]
 
 
 
